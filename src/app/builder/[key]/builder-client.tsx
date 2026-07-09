@@ -540,6 +540,17 @@ function BusinessEditor({ config, update }: { config: SiteConfig; update: (fn: (
     update((c) => ((c.business as any)[k] = e.target.value, c));
   return (
     <div className="space-y-4">
+      <LogoField
+        logoUrl={b.logoUrl}
+        faviconUrl={b.faviconUrl}
+        onUploaded={(logoUrl, faviconUrl) =>
+          update((c) => {
+            c.business.logoUrl = logoUrl;
+            if (faviconUrl) c.business.faviconUrl = faviconUrl;
+            return c;
+          })
+        }
+      />
       <div>
         <Label>Nombre del negocio</Label>
         <Input value={b.name} onChange={setB("name")} />
@@ -803,6 +814,54 @@ function GalleryEditor({ images, onChange }: { images: string[]; onChange: (imgs
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Logo del negocio: al subirlo se regenera el favicon automáticamente. */
+function LogoField({
+  logoUrl,
+  faviconUrl,
+  onUploaded,
+}: {
+  logoUrl: string;
+  faviconUrl: string;
+  onUploaded: (logoUrl: string, faviconUrl?: string) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  async function upload(file: File) {
+    setUploading(true);
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/upload?favicon=1", { method: "POST", body: fd });
+    setUploading(false);
+    if (res.ok) {
+      const json = await res.json();
+      onUploaded(json.url, json.faviconUrl);
+    }
+  }
+  return (
+    <div className="rounded-xl bg-slate-50 p-3">
+      <Label>Logo del negocio {uploading && <span className="text-brand-blue">(subiendo…)</span>}</Label>
+      <input
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/svg+xml"
+        onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
+        className="block w-full text-xs text-slate-500 file:mr-3 file:rounded file:border-0 file:bg-brand-teal/20 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-brand-navy"
+      />
+      <p className="mt-1 text-xs text-slate-400">Al subir el logo, el favicon (ícono de la pestaña) se genera solo.</p>
+      {(logoUrl || faviconUrl) && (
+        <div className="mt-2 flex items-center gap-3">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          {logoUrl && <img src={logoUrl} alt="logo" className="h-10 rounded bg-white p-1" />}
+          {faviconUrl && (
+            <span className="flex items-center gap-1.5 text-xs text-slate-500">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              Favicon: <img src={faviconUrl} alt="favicon" className="h-5 w-5 rounded" />
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
