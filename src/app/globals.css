@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-display: "Righteous", system-ui, sans-serif;
+}
+
+body {
+  @apply bg-slate-950 text-slate-100 antialiased;
+}
+
+/* Panel claro para las vistas de app (builder/admin) */
+.app-surface {
+  @apply bg-slate-50 text-slate-900;
+}
