@@ -9,3 +9,4 @@ public/uploads/
 .DS_Store
 # Carpeta legado (shell vacío de un clon anterior)
 Sitios Express/
+vercel.env
