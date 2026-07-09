@@ -24,15 +24,25 @@ function slugify(s: string): string {
   );
 }
 
-/** /uploads/foo.png → assets/foo.png (el zip incluye el archivo) */
+// Imágenes subidas: en dev viven en /uploads/, en producción en Vercel Blob.
+// Ambas se reescriben a assets/ y el endpoint de export las mete al .zip
+// para que el sitio descargado sea autocontenido.
+const BLOB_URL_RE = /^https:\/\/[^/]+\.public\.blob\.vercel-storage\.com\//;
+
+export function isUploadedAsset(url: string): boolean {
+  return url.startsWith("/uploads/") || BLOB_URL_RE.test(url);
+}
+
+/** /uploads/foo.png o URL de Blob → assets/foo.png */
 export function assetPath(url: string): string {
-  return url.startsWith("/uploads/") ? `assets/${url.slice("/uploads/".length)}` : url;
+  if (!isUploadedAsset(url)) return url;
+  return `assets/${url.split("/").pop()}`;
 }
 
 export function collectUploads(config: SiteConfig): string[] {
   const urls = new Set<string>();
   const walk = (v: unknown) => {
-    if (typeof v === "string" && v.startsWith("/uploads/")) urls.add(v);
+    if (typeof v === "string" && isUploadedAsset(v)) urls.add(v);
     else if (Array.isArray(v)) v.forEach(walk);
     else if (v && typeof v === "object") Object.values(v).forEach(walk);
   };

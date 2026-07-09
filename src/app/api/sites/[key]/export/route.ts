@@ -33,13 +33,15 @@ export async function GET(_req: Request, { params }: { params: { key: string } }
   const zip = new JSZip();
   for (const [name, content] of Object.entries(files)) zip.file(name, content);
 
-  // Incluir imágenes subidas como assets/
+  // Incluir imágenes subidas como assets/ (disco local en dev, Blob en prod)
   for (const url of collectUploads(config)) {
     try {
-      const buf = await readFile(path.join(process.cwd(), "public", url));
-      zip.file(`assets/${url.slice("/uploads/".length)}`, buf);
+      const buf = url.startsWith("/uploads/")
+        ? await readFile(path.join(process.cwd(), "public", url))
+        : Buffer.from(await (await fetch(url)).arrayBuffer());
+      zip.file(`assets/${url.split("/").pop()}`, buf);
     } catch {
-      // imagen borrada del disco: se omite sin romper el export
+      // imagen inaccesible: se omite sin romper el export
     }
   }
 
