@@ -33,6 +33,7 @@ export function BuilderClient({
   templateConfig,
   template,
   catalog,
+  supportWhatsapp = "",
 }: {
   siteKey: string;
   siteStatus: string;
@@ -41,6 +42,8 @@ export function BuilderClient({
   templateConfig: TemplateConfig;
   template: { name: string; basePrice: number };
   catalog: CatalogWidget[];
+  /** Solo dígitos, ej. 5215512345678 — para avisar montaje por WhatsApp */
+  supportWhatsapp?: string;
 }) {
   const [config, setConfig] = useState<SiteConfig>(() => {
     // Si un sitio viejo tenía ambos montajes, dejar solo el de dominio propio
@@ -280,6 +283,40 @@ export function BuilderClient({
 
   const sorted = [...config.sections].sort((a, b) => a.order - b.order);
 
+  const hasMontaje = config.widgets.some(
+    (w) => w.widgetId === "montaje-sin-dominio" || w.widgetId === "montaje-con-dominio"
+  );
+  const montajeConDominio = config.widgets.some((w) => w.widgetId === "montaje-con-dominio");
+  const montajeWidget = config.widgets.find(
+    (w) => w.widgetId === "montaje-con-dominio" || w.widgetId === "montaje-sin-dominio"
+  );
+  const showMontajeWhatsApp = status === "PAID" && hasMontaje && Boolean(supportWhatsapp);
+
+  function montajeWhatsAppHref() {
+    if (typeof window === "undefined") return "#";
+    const origin = window.location.origin;
+    const editorUrl = `${origin}/builder/${siteKey}`;
+    const previewUrl = `${origin}/preview/${siteKey}`;
+    const lines = [
+      `Hola, pagué el montaje de mi sitio: ${config.business.name}`,
+      "",
+      `Enlace del editor: ${editorUrl}`,
+      `Vista previa: ${previewUrl}`,
+    ];
+    if (montajeConDominio) {
+      const domain = String((montajeWidget?.config as any)?.desiredDomain ?? "").trim();
+      lines.push(domain ? `Dominio deseado: ${domain}` : "Montaje con dominio propio");
+    } else {
+      const sub = String((montajeWidget?.config as any)?.subdomain ?? "").trim();
+      lines.push(
+        sub
+          ? `Subdominio: ${sub}.sitiosexpress.mx`
+          : "Montaje en línea (sin dominio propio)"
+      );
+    }
+    return `https://wa.me/${supportWhatsapp}?text=${encodeURIComponent(lines.join("\n"))}`;
+  }
+
   return (
     <div className="app-surface flex h-screen flex-col bg-slate-100">
       {/* Barra superior */}
@@ -352,6 +389,24 @@ export function BuilderClient({
       {paymentBanner === "cancelled" && (
         <div className="border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-800">
           El pago se canceló — puedes intentarlo de nuevo cuando quieras con el botón Pagar.
+        </div>
+      )}
+
+      {/* Tras pagar montaje: avisar por WhatsApp para coordinar la publicación */}
+      {showMontajeWhatsApp && (
+        <div className="flex flex-col items-center justify-center gap-2 border-b border-emerald-300 bg-emerald-50 px-4 py-3 sm:flex-row sm:gap-4">
+          <p className="text-center text-sm text-emerald-900">
+            ✅ Pagaste el <b>montaje</b> de tu sitio. Avisa al equipo para que lo publiquen:
+          </p>
+          <a
+            href={montajeWhatsAppHref()}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-2 rounded-lg bg-[#25D366] px-4 py-2 text-sm font-semibold text-white shadow-sm transition-transform hover:scale-[1.02] hover:bg-[#1ebe57]"
+          >
+            <span aria-hidden>💬</span>
+            Avisar por WhatsApp
+          </a>
         </div>
       )}
 
