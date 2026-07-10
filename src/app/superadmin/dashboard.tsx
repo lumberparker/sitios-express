@@ -9,7 +9,7 @@ import { formatMoney } from "@/lib/utils";
 
 type WidgetRow = { id: string; slug: string; name: string; description: string; sectionType: string | null; price: number; active: boolean };
 type TemplateRow = { id: string; slug: string; name: string; description: string; basePrice: number; active: boolean; config: unknown };
-type SiteRow = { id: string; editKey: string; name: string; status: string; total: number; owner: string; template: string; updatedAt: string };
+type SiteRow = { id: string; editKey: string; name: string; status: string; total: number; paid: number; owner: string; template: string; updatedAt: string };
 
 const STATUS_TONE: Record<string, "amber" | "slate" | "green"> = { DRAFT: "amber", COMPLETED: "slate", PAID: "green" };
 const STATUS_LABEL: Record<string, string> = { DRAFT: "Borrador", COMPLETED: "Completado", PAID: "Pagado" };
@@ -80,7 +80,14 @@ export function SuperAdminDashboard({ templates, widgets, sites }: { templates: 
                     <td className="px-4 py-3 text-slate-600">{s.owner}</td>
                     <td className="px-4 py-3 text-slate-600">{s.template}</td>
                     <td className="px-4 py-3"><Badge tone={STATUS_TONE[s.status]}>{STATUS_LABEL[s.status]}</Badge></td>
-                    <td className="px-4 py-3 text-right font-semibold">{formatMoney(s.total)}</td>
+                    <td className="px-4 py-3 text-right font-semibold">
+                      {formatMoney(s.total)}
+                      {s.paid > 0 && s.total > s.paid && (
+                        <div className="text-xs font-normal text-amber-600">
+                          pagado {formatMoney(s.paid)} · saldo {formatMoney(s.total - s.paid)}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       <Link href={`/preview/${s.editKey}`} target="_blank" className="text-brand-blue hover:underline">Ver ↗</Link>
                       <Link href={`/builder/${s.editKey}`} target="_blank" className="ml-3 text-brand-blue hover:underline">Editar ↗</Link>

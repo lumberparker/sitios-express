@@ -366,6 +366,12 @@ function PayButton({
 }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [requested, setRequested] = useState(false);
+
+  const saldo = Math.max(0, total - paidTotal);
+  // El cliente puede confirmar: su primer pedido (DRAFT) o el pago del
+  // saldo cuando agregó módulos después de haber pagado.
+  const canConfirm = status === "DRAFT" || (status === "COMPLETED" && paidTotal > 0 && saldo > 0 && !requested);
 
   async function confirm() {
     setLoading(true);
@@ -375,6 +381,7 @@ function PayButton({
       body: JSON.stringify({ action: "complete" }),
     });
     setLoading(false);
+    setRequested(true);
     setOpen(false);
     onPaid();
   }
@@ -385,7 +392,7 @@ function PayButton({
         onClick={() => setOpen(true)}
         className="h-8 rounded-lg bg-emerald-600 px-3 text-sm font-medium text-white hover:bg-emerald-500 transition-colors"
       >
-        {status === "DRAFT" ? "Pagar" : "Ver mi pedido"}
+        {status === "DRAFT" ? "Pagar" : status !== "PAID" && paidTotal > 0 && saldo > 0 ? `Pagar saldo` : "Ver mi pedido"}
       </button>
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setOpen(false)}>
@@ -418,25 +425,29 @@ function PayButton({
                 </div>
               </div>
             )}
-            {status === "DRAFT" ? (
+            {canConfirm ? (
               <>
                 <p className="mt-4 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
-                  🚧 La pasarela de pago (Stripe/PayPal) se integrará próximamente. Al confirmar, tu pedido queda registrado y
-                  nos pondremos en contacto para el pago. Puedes seguir editando tu sitio.
+                  🚧 La pasarela de pago (Stripe/PayPal) se integrará próximamente. Al confirmar, tu solicitud queda
+                  registrada y nos pondremos en contacto para el cobro. Puedes seguir editando tu sitio.
                 </p>
                 <div className="mt-4 flex gap-2">
                   <Button variant="outline" className="flex-1" onClick={() => setOpen(false)}>
                     Cancelar
                   </Button>
                   <Button className="flex-1" onClick={confirm} disabled={loading}>
-                    {loading ? "Confirmando…" : "Confirmar pedido"}
+                    {loading ? "Confirmando…" : status === "DRAFT" ? "Confirmar pedido" : `Pagar saldo (${formatMoney(saldo)})`}
                   </Button>
                 </div>
               </>
             ) : (
               <div className="mt-4">
                 <p className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">
-                  ✅ Tu pedido ya está registrado. Si sigues editando y cambia el total, el nuevo monto queda reflejado aquí.
+                  {status === "PAID"
+                    ? "✅ Tu pedido está pagado. Si agregas módulos nuevos, aquí aparecerá el saldo a cubrir."
+                    : requested && saldo > 0
+                      ? "✅ Registramos tu solicitud de pago del saldo. Nos pondremos en contacto para el cobro."
+                      : "✅ Tu pedido ya está registrado. Si sigues editando y cambia el total, el nuevo monto queda reflejado aquí."}
                 </p>
                 <Button variant="outline" className="mt-3 w-full" onClick={() => setOpen(false)}>
                   Cerrar

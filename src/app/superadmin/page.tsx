@@ -36,6 +36,7 @@ export default async function SuperAdminPage() {
           name: s.name,
           status: s.status,
           total: s.invoice?.total ?? 0,
+          paid: s.invoice?.paidTotal ?? 0,
           owner: contact,
           template: s.template.name,
           updatedAt: s.updatedAt.toLocaleDateString("es-MX"),
