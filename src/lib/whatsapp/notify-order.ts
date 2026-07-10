@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { sendWhatsApp } from "@/lib/whatsapp/wapisimo";
+import { sendWhatsApp, wapisimoConfigStatus } from "@/lib/whatsapp/wapisimo";
 
 function appUrl() {
   return (process.env.NEXTAUTH_URL ?? "http://localhost:3000").replace(/\/$/, "");
@@ -9,11 +9,15 @@ function appUrl() {
  * Número que recibe los avisos de pedidos.
  * Prioridad: ORDER_NOTIFY_WHATSAPP → SUPPORT_WHATSAPP → 529993912818
  */
+function envVal(name: string): string {
+  return (process.env[name] ?? "").trim().replace(/^["']|["']$/g, "").trim();
+}
+
 export function orderNotifyDigits(): string {
   const raw =
-    process.env.ORDER_NOTIFY_WHATSAPP ||
-    process.env.SUPPORT_WHATSAPP ||
-    process.env.NEXT_PUBLIC_SUPPORT_WHATSAPP ||
+    envVal("ORDER_NOTIFY_WHATSAPP") ||
+    envVal("SUPPORT_WHATSAPP") ||
+    envVal("NEXT_PUBLIC_SUPPORT_WHATSAPP") ||
     "529993912818";
   return raw.replace(/\D/g, "");
 }
@@ -39,9 +43,16 @@ export async function notifyOrderPaid(siteId: string): Promise<void> {
 
     const to = orderNotifyDigits();
     if (!to) {
-      console.warn("[notify-order] sin número de destino");
+      console.warn("[notify-order] sin número de destino (ORDER_NOTIFY_WHATSAPP)");
       return;
     }
+
+    const wapi = wapisimoConfigStatus();
+    if (!wapi.ok) {
+      console.warn(`[notify-order] Wapisimo no listo: ${wapi.reason} — no se envía a ${to}`);
+      return;
+    }
+    console.log(`[notify-order] enviando resumen a ${to} (phoneId=${wapi.phoneId})`);
 
     const config = site.config as {
       business?: { name?: string; email?: string; phone?: string };

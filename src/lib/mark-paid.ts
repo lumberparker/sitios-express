@@ -38,9 +38,14 @@ export async function markSitePaid(siteId: string, paidAmountMxn?: number): Prom
 
   console.log(`[markSitePaid] sitio ${siteId} → PAID (paidTotal=${paidTotal})`);
 
-  // Resumen del pedido por WhatsApp (solo la primera vez que queda pagado)
+  // Resumen del pedido por WhatsApp (solo la primera vez que queda pagado).
+  // IMPORTANTE: await — en Vercel un fire-and-forget se corta al terminar el request.
   if (!alreadyPaid) {
-    void notifyOrderPaid(siteId);
+    try {
+      await notifyOrderPaid(siteId);
+    } catch (err) {
+      console.error("[markSitePaid] fallo al notificar WhatsApp (el pago SÍ quedó registrado):", err);
+    }
   }
 
   return true;

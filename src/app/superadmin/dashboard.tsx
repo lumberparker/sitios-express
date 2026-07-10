@@ -45,9 +45,42 @@ export function SuperAdminDashboard({ templates, widgets, sites }: { templates: 
   return (
     <main className="app-surface min-h-screen bg-slate-100 px-4 py-10">
       <div className="mx-auto max-w-5xl">
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-2">
           <h1 className="text-2xl font-bold text-slate-900">Panel Super Admin</h1>
-          <Button variant="ghost" size="sm" onClick={() => signOut({ callbackUrl: "/" })}>Cerrar sesión</Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                const res = await fetch("/api/superadmin/test-wapisimo");
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                  alert(data.error ?? "No autorizado");
+                  return;
+                }
+                if (!data.configured) {
+                  alert(
+                    `Wapisimo NO listo en este deploy:\n${data.reason ?? "sin detalle"}\n\n` +
+                      `hasApiKey=${data.hasApiKey}\nphoneId=${data.phoneId ?? "—"}\n` +
+                      `notifyTo=${data.notifyTo ?? "—"}\n\n` +
+                      "En Vercel → Settings → Environment Variables agrega:\n" +
+                      "WAPISIMO_API_KEY, WAPISIMO_PHONE_ID, ORDER_NOTIFY_WHATSAPP\n" +
+                      "para Production, y haz Redeploy."
+                  );
+                  return;
+                }
+                if (!confirm(`¿Enviar mensaje de prueba a ${data.notifyTo}?`)) return;
+                const send = await fetch("/api/superadmin/test-wapisimo", { method: "POST" });
+                const body = await send.json().catch(() => ({}));
+                alert(send.ok ? body.message ?? "Enviado" : body.error ?? "Error al enviar");
+              }}
+            >
+              Probar WhatsApp
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => signOut({ callbackUrl: "/" })}>
+              Cerrar sesión
+            </Button>
+          </div>
         </div>
 
         {/* Reporte de ingresos */}

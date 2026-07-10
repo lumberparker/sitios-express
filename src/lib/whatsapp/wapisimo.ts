@@ -1,88 +1,152 @@
 // Cliente de wapisimo.dev — https://app.wapisimo.dev/docs
 // Base: https://api.wapisimo.dev/v1
 // Auth: Bearer WAPISIMO_API_KEY
-// Phone id (UUID de la instancia), ej:
-//   https://api.wapisimo.dev/v1/0cea982a-4cd8-4fc6-bf1b-b5d7d9bddf90
+// Phone id (UUID): WAPISIMO_PHONE_ID
 // Envío (docs): POST /v1/{phone_id}/send  { to, message }
-// Webhook: POST /v1/{phone_id}/webhook  { url }
-// Cola: ~1 mensaje/segundo en su lado
 
 const BASE = "https://api.wapisimo.dev/v1";
 
-/** "5215512345678@s.whatsapp.net" o "+52 999..." → dígitos con código de país */
+/** Limpia valores de env (Vercel a veces deja comillas o espacios). */
+function env(name: string): string {
+  return (process.env[name] ?? "")
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .trim();
+}
+
+/** "529993912818@s.whatsapp.net" o "+52 999..." → dígitos con código de país */
 export function toDigits(phone: string): string {
   return phone.split("@")[0].replace(/\D/g, "");
 }
 
-/** "521...@s.whatsapp.net" → "+521..." */
+/** "52...@s.whatsapp.net" → "+52..." */
 export function normalizePhone(from: string): string {
-  const digits = toDigits(from);
+  const digits = normalizeMexicoMobile(from);
   return digits ? `+${digits}` : "";
 }
 
+/**
+ * Normaliza destino: solo dígitos.
+ * México: código de país 52 + 10 dígitos locales (ej. 529993912818).
+ * No se inserta el "1" extra (521…).
+ */
+export function normalizeMexicoMobile(digits: string): string {
+  const d = toDigits(digits);
+  // 10 dígitos locales MX → anteponer 52
+  if (d.length === 10) return `52${d}`;
+  // Si alguien pasó 521 + 10 dígitos (13), quitar el 1 de más → 52 + 10
+  if (d.length === 13 && d.startsWith("521")) return `52${d.slice(3)}`;
+  return d;
+}
+
 export function isConfigured(): boolean {
-  return Boolean(
-    process.env.WAPISIMO_API_KEY?.trim() && process.env.WAPISIMO_PHONE_ID?.trim()
-  );
+  const key = env("WAPISIMO_API_KEY");
+  const phoneId = env("WAPISIMO_PHONE_ID");
+  if (!key || !phoneId) return false;
+  if (key.includes("REEMPLAZA") || key.includes("...")) return false;
+  return true;
+}
+
+export function wapisimoConfigStatus(): {
+  ok: boolean;
+  reason?: string;
+  phoneId?: string;
+  hasApiKey?: boolean;
+} {
+  const key = env("WAPISIMO_API_KEY");
+  const phoneId = env("WAPISIMO_PHONE_ID");
+  if (!phoneId) return { ok: false, reason: "Falta WAPISIMO_PHONE_ID en Vercel", hasApiKey: Boolean(key) };
+  if (!key) {
+    return {
+      ok: false,
+      reason: "Falta WAPISIMO_API_KEY en Vercel (Environment Variables → Production + redeploy)",
+      phoneId,
+      hasApiKey: false,
+    };
+  }
+  return { ok: true, phoneId, hasApiKey: true };
 }
 
 /**
  * Envía un mensaje de WhatsApp vía Wapisimo.
- * `to`: número con código de país (con o sin + / espacios).
- * Sin credenciales (dev) solo hace log y no falla.
- *
- * Endpoint: POST https://api.wapisimo.dev/v1/{phone_id}/send
  * @see https://app.wapisimo.dev/docs
  */
 export async function sendWhatsApp(to: string, message: string): Promise<void> {
-  const digits = toDigits(to);
+  let digits = normalizeMexicoMobile(to);
   if (!digits) {
     console.error("[wapisimo] destinatario inválido:", to);
     return;
   }
 
-  if (!isConfigured()) {
+  const status = wapisimoConfigStatus();
+  if (!status.ok) {
+    console.warn(`[wapisimo] no configurado: ${status.reason}`);
     console.log(`[wapisimo:dev] → ${digits}:\n${message}`);
     return;
   }
 
-  const phoneId = process.env.WAPISIMO_PHONE_ID!.trim();
-  const apiKey = process.env.WAPISIMO_API_KEY!.trim();
-  const payload = JSON.stringify({ to: digits, message });
+  const phoneId = env("WAPISIMO_PHONE_ID");
+  const apiKey = env("WAPISIMO_API_KEY");
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json",
+    Accept: "application/json",
   };
 
-  // Docs: .../v1/{id}/send — algunos paneles muestran solo .../v1/{id}
+  // Variantes de endpoint y payload que se ven en la docs / paneles
   const urls = [`${BASE}/${phoneId}/send`, `${BASE}/${phoneId}`];
+  const bodies = [
+    { to: digits, message },
+    { to: `+${digits}`, message },
+    { number: digits, message },
+    { phone: digits, text: message },
+  ];
+
   let lastStatus = 0;
   let lastBody = "";
+  let lastUrl = "";
 
   for (const url of urls) {
-    const res = await fetch(url, { method: "POST", headers, body: payload });
-    if (res.ok) return;
-    lastStatus = res.status;
-    lastBody = await res.text().catch(() => "");
-    // Si no es 404, no tiene sentido probar la otra ruta
-    if (res.status !== 404) break;
+    for (const body of bodies) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        });
+        lastStatus = res.status;
+        lastBody = await res.text().catch(() => "");
+        lastUrl = url;
+        if (res.ok) {
+          console.log(`[wapisimo] OK → ${digits} via ${url}`);
+          return;
+        }
+        // 401/403: API key incorrecta — no seguir probando
+        if (res.status === 401 || res.status === 403) {
+          console.error(`[wapisimo] auth fallida (${res.status}) en ${url}:`, lastBody);
+          throw new Error(`Wapisimo auth ${res.status}: revisa WAPISIMO_API_KEY`);
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith("Wapisimo auth")) throw err;
+        console.error("[wapisimo] error de red:", err);
+      }
+    }
   }
 
-  console.error(`[wapisimo] fallo al enviar (${lastStatus}):`, lastBody);
-  throw new Error(`Wapisimo ${lastStatus}: ${lastBody.slice(0, 200)}`);
+  console.error(`[wapisimo] fallo al enviar (${lastStatus}) ${lastUrl}:`, lastBody);
+  throw new Error(`Wapisimo ${lastStatus}: ${lastBody.slice(0, 300)}`);
 }
 
 /**
  * Registra la URL del webhook entrante en Wapisimo (opcional, setup).
- * POST https://api.wapisimo.dev/v1/{phone_id}/webhook  { url }
  */
 export async function registerWebhook(publicUrl: string): Promise<boolean> {
   if (!isConfigured()) {
     console.log("[wapisimo:dev] registerWebhook omitido:", publicUrl);
     return false;
   }
-  const phoneId = process.env.WAPISIMO_PHONE_ID!.trim();
-  const apiKey = process.env.WAPISIMO_API_KEY!.trim();
+  const phoneId = env("WAPISIMO_PHONE_ID");
+  const apiKey = env("WAPISIMO_API_KEY");
   const res = await fetch(`${BASE}/${phoneId}/webhook`, {
     method: "POST",
     headers: {
