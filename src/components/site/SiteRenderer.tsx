@@ -10,10 +10,14 @@ import { motion } from "framer-motion";
 import type { SiteConfig, Section, TemplateConfig, ExtraPage } from "@/lib/site-config";
 import {
   SECTION_LABELS,
+  cssObjectPosition,
   effectiveFonts,
   getExtraPages,
   normalizeIframeSrc,
   normalizeMapEmbedUrl,
+  normalizeObjectFit,
+  normalizePosX,
+  normalizePosY,
   resolveCtaLink,
 } from "@/lib/site-config";
 
@@ -628,14 +632,20 @@ export type GalleryImage = {
   colSpan?: number;
   /** Cuántas filas del grid ocupa (1 = celda normal). */
   rowSpan?: number;
+  /** cover = rellena recortando; contain = caber entera */
+  objectFit?: "cover" | "contain";
+  /** Posición horizontal del recorte/encuadre */
+  posX?: "left" | "center" | "right";
+  /** Posición vertical del recorte/encuadre */
+  posY?: "top" | "center" | "bottom";
 };
 
-/** Acepta el formato viejo (string[]) y el nuevo ([{ url, caption, colSpan, rowSpan }]). */
+/** Acepta el formato viejo (string[]) y el nuevo ([{ url, caption, colSpan, rowSpan, … }]). */
 export function normalizeGalleryImages(raw: any, maxCols = 10): GalleryImage[] {
   const out: GalleryImage[] = [];
   for (const i of (raw as any[]) ?? []) {
     if (typeof i === "string") {
-      if (i) out.push({ url: i, colSpan: 1, rowSpan: 1 });
+      if (i) out.push({ url: i, colSpan: 1, rowSpan: 1, objectFit: "cover", posX: "center", posY: "center" });
       continue;
     }
     if (!i?.url) continue;
@@ -644,6 +654,9 @@ export function normalizeGalleryImages(raw: any, maxCols = 10): GalleryImage[] {
       caption: i.caption ? String(i.caption) : "",
       colSpan: Math.min(maxCols, Math.max(1, Number(i.colSpan) || 1)),
       rowSpan: Math.min(maxCols, Math.max(1, Number(i.rowSpan) || 1)),
+      objectFit: normalizeObjectFit(i.objectFit),
+      posX: normalizePosX(i.posX),
+      posY: normalizePosY(i.posY),
     });
   }
   return out;
@@ -678,15 +691,16 @@ function GallerySection({ section, heading }: { section: Section; heading: React
     maxWidthRaw === "0"
       ? 0
       : Math.min(1400, Math.max(320, Number(maxWidthRaw) || 960));
-  const maxCell = Math.min(600, Math.max(0, Number(c.maxCell ?? 0) || 0));
+  // Default 300px; 0 = sin tope (reparte el ancho del contenedor)
+  const maxCell = Math.min(600, Math.max(0, Number(c.maxCell ?? 300)));
   // Alto de una fila del grid (= celda 1×1). Con maxCell se alinea al ancho de celda.
   const rowTrack = maxCell > 0 ? maxCell : Math.min(220, Math.max(100, Number(c.rowHeight ?? 160) || 160));
 
   // Reglas dinámicas (hover/caption/spans) con alcance por sección
   const css = [
     `#${id} .g-cell{min-width:0;min-height:0}`,
-    `#${id} .g-item{position:relative;overflow:hidden;border-radius:${radius}px;width:100%;height:100%;margin:0}`,
-    `#${id} .g-item img{width:100%;height:100%;object-fit:cover;display:block;border-radius:${radius}px;transition:transform .35s ease,filter .35s ease;${
+    `#${id} .g-item{position:relative;overflow:hidden;border-radius:${radius}px;width:100%;height:100%;margin:0;background:rgba(0,0,0,.06)}`,
+    `#${id} .g-item img{width:100%;height:100%;display:block;border-radius:${radius}px;transition:transform .35s ease,filter .35s ease;${
       borderWidth ? `border:${borderWidth}px solid ${borderColor};` : ""
     }}`,
     `#${id} .g-cap{position:absolute;left:0;right:0;bottom:0;padding:.9rem;color:#fff;font-size:.85rem;background:linear-gradient(transparent,rgba(0,0,0,.75));border-radius:0 0 ${radius}px ${radius}px;transition:opacity .3s}`,
@@ -744,7 +758,14 @@ function GallerySection({ section, heading }: { section: Section; heading: React
               >
                 <figure className="g-item">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={img.url} alt={img.caption || ""} />
+                  <img
+                    src={img.url}
+                    alt={img.caption || ""}
+                    style={{
+                      objectFit: normalizeObjectFit(img.objectFit),
+                      objectPosition: cssObjectPosition(normalizePosX(img.posX), normalizePosY(img.posY)),
+                    }}
+                  />
                   {img.caption && <figcaption className="g-cap">{img.caption}</figcaption>}
                 </figure>
               </Reveal>
@@ -794,9 +815,17 @@ function CarouselSection({ section, heading }: { section: Section; heading: Reac
             style={{ transform: `translateX(-${idx * 100}%)` }}
           >
             {images.map((img, i) => (
-              <div key={i} className="relative w-full shrink-0" style={{ height }}>
+              <div key={i} className="relative w-full shrink-0 bg-black/10" style={{ height }}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={img.url} alt={img.caption || ""} className="h-full w-full object-cover" />
+                <img
+                  src={img.url}
+                  alt={img.caption || ""}
+                  className="h-full w-full"
+                  style={{
+                    objectFit: normalizeObjectFit(img.objectFit),
+                    objectPosition: cssObjectPosition(normalizePosX(img.posX), normalizePosY(img.posY)),
+                  }}
+                />
                 {img.caption && (
                   <p className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent p-5 text-sm text-white">
                     {img.caption}

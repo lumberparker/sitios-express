@@ -7,10 +7,14 @@
 import type { SiteConfig, Section, TemplateConfig, ExtraPage as ConfigExtraPage } from "@/lib/site-config";
 import {
   SECTION_LABELS,
+  cssObjectPosition,
   effectiveFonts,
   getExtraPages,
   normalizeIframeSrc,
   normalizeMapEmbedUrl,
+  normalizeObjectFit,
+  normalizePosX,
+  normalizePosY,
   resolveCtaLink,
 } from "@/lib/site-config";
 
@@ -192,18 +196,37 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
 
     case "gallery": {
       const cols = Math.min(10, Math.max(2, Number(c.columns) || 3));
-      const images: { url: string; caption?: string; colSpan: number; rowSpan: number }[] = ((c.images as any[]) ?? [])
+      type GImg = {
+        url: string;
+        caption: string;
+        colSpan: number;
+        rowSpan: number;
+        objectFit: string;
+        objectPosition: string;
+      };
+      const images: GImg[] = ((c.images as any[]) ?? [])
         .map((i: any) => {
-          if (typeof i === "string") return { url: i, caption: "", colSpan: 1, rowSpan: 1 };
+          if (typeof i === "string") {
+            return {
+              url: i,
+              caption: "",
+              colSpan: 1,
+              rowSpan: 1,
+              objectFit: "cover",
+              objectPosition: "center center",
+            };
+          }
           if (!i?.url) return null;
           return {
             url: i.url as string,
             caption: i.caption ? String(i.caption) : "",
             colSpan: Math.min(cols, Math.max(1, Number(i.colSpan) || 1)),
             rowSpan: Math.min(cols, Math.max(1, Number(i.rowSpan) || 1)),
+            objectFit: normalizeObjectFit(i.objectFit),
+            objectPosition: cssObjectPosition(normalizePosX(i.posX), normalizePosY(i.posY)),
           };
         })
-        .filter((i: any): i is { url: string; caption: string; colSpan: number; rowSpan: number } => Boolean(i?.url))
+        .filter((i: any): i is GImg => Boolean(i?.url))
         .slice(0, 24);
       const gapX = Number(c.gapX ?? 12);
       const gapY = Number(c.gapY ?? 12);
@@ -222,7 +245,7 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
         maxWidthRaw === "0"
           ? 0
           : Math.min(1400, Math.max(320, Number(maxWidthRaw) || 960));
-      const maxCell = Math.min(600, Math.max(0, Number(c.maxCell ?? 0) || 0));
+      const maxCell = Math.min(600, Math.max(0, Number(c.maxCell ?? 300)));
       const rowTrack = maxCell > 0 ? maxCell : Math.min(220, Math.max(100, Number(c.rowHeight ?? 160) || 160));
       const colsRule = maxCell
         ? `repeat(${cols},minmax(0,${maxCell}px))`
@@ -241,18 +264,20 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
       ]
         .filter(Boolean)
         .join(";");
-      const imgStyle = ` style="border-radius:${radius}px;${borderWidth ? `border:${borderWidth}px solid ${borderColor};` : ""}"`;
       return `<section ${attrs} class="gallery-section">
   <div class="container">
     <h2 class="section__title section__title--center reveal">${esc(c.title)}</h2>
     <div class="gallery gallery--fx-${fx} gallery--cap-${cap}" style="${gridStyle}">
       ${images
-        .map(
-          (img) => `<figure class="gallery__item reveal" style="border-radius:${radius}px;grid-column:span ${img.colSpan};grid-row:span ${img.rowSpan}">
+        .map((img) => {
+          const imgStyle = ` style="border-radius:${radius}px;object-fit:${img.objectFit};object-position:${img.objectPosition};${
+            borderWidth ? `border:${borderWidth}px solid ${borderColor};` : ""
+          }"`;
+          return `<figure class="gallery__item reveal" style="border-radius:${radius}px;grid-column:span ${img.colSpan};grid-row:span ${img.rowSpan}">
         <img class="gallery__image" src="${assetPath(img.url)}" alt="${esc(img.caption ?? "")}" loading="lazy"${imgStyle}>
         ${img.caption ? `<figcaption class="gallery__caption" style="border-radius:0 0 ${radius}px ${radius}px">${esc(img.caption)}</figcaption>` : ""}
-      </figure>`
-        )
+      </figure>`;
+        })
         .join("\n")}
     </div>
   </div>
@@ -260,10 +285,22 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
     }
 
     case "carousel": {
-      const images: { url: string; caption?: string }[] = ((c.images as any[]) ?? [])
-        .map((i: any) => (typeof i === "string" ? { url: i } : i))
-        .filter((i: any) => i?.url)
-        .slice(0, 15);
+      type CImg = { url: string; caption: string; objectFit: string; objectPosition: string };
+      const images: CImg[] = [];
+      for (const i of (c.images as any[]) ?? []) {
+        if (images.length >= 15) break;
+        if (typeof i === "string") {
+          if (i) images.push({ url: i, caption: "", objectFit: "cover", objectPosition: "center center" });
+          continue;
+        }
+        if (!i?.url) continue;
+        images.push({
+          url: String(i.url),
+          caption: i.caption ? String(i.caption) : "",
+          objectFit: normalizeObjectFit(i.objectFit),
+          objectPosition: cssObjectPosition(normalizePosX(i.posX), normalizePosY(i.posY)),
+        });
+      }
       if (images.length === 0) return "";
       const interval = Math.min(10, Math.max(2, Number(c.interval) || 4)) * 1000;
       const height = Math.min(640, Math.max(200, Number(c.height) || 400));
@@ -276,7 +313,7 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
         ${images
           .map(
             (img) => `<div class="carousel__slide" style="height:${height}px">
-          <img class="carousel__image" src="${assetPath(img.url)}" alt="${esc(img.caption ?? "")}" loading="lazy">
+          <img class="carousel__image" src="${assetPath(img.url)}" alt="${esc(img.caption ?? "")}" loading="lazy" style="object-fit:${img.objectFit};object-position:${img.objectPosition}">
           ${img.caption ? `<p class="carousel__caption">${esc(img.caption)}</p>` : ""}
         </div>`
           )
@@ -602,8 +639,8 @@ section { padding: 6rem 0; }
 
 /* Bloque: gallery bento (spans, espaciados y borde van inline desde el builder) */
 .gallery { display: grid; margin-top: 3rem; grid-auto-flow: dense; }
-.gallery__item { position: relative; overflow: hidden; border-radius: 16px; margin: 0; min-width: 0; min-height: 0; width: 100%; height: 100%; }
-.gallery__image { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 16px; transition: transform .35s ease, filter .35s ease; }
+.gallery__item { position: relative; overflow: hidden; border-radius: 16px; margin: 0; min-width: 0; min-height: 0; width: 100%; height: 100%; background: rgba(0,0,0,.06); }
+.gallery__image { width: 100%; height: 100%; object-fit: cover; object-position: center center; display: block; border-radius: 16px; transition: transform .35s ease, filter .35s ease; }
 .gallery__caption { position: absolute; left: 0; right: 0; bottom: 0; padding: .9rem; color: #fff; font-size: .85rem; background: linear-gradient(transparent, rgba(0,0,0,.75)); border-radius: 0 0 16px 16px; transition: opacity .3s; }
 /* Modificadores: texto sobre la imagen */
 .gallery--cap-hover .gallery__caption { opacity: 0; }
@@ -626,7 +663,8 @@ section { padding: 6rem 0; }
 .carousel { position: relative; overflow: hidden; margin-top: 2rem; }
 .carousel__track { display: flex; transition: transform .7s ease; }
 .carousel__slide { position: relative; min-width: 100%; }
-.carousel__image { width: 100%; height: 100%; object-fit: cover; display: block; }
+.carousel__slide { background: rgba(0,0,0,.06); }
+.carousel__image { width: 100%; height: 100%; object-fit: cover; object-position: center center; display: block; }
 .carousel__caption { position: absolute; left: 0; right: 0; bottom: 0; padding: 1.2rem; color: #fff; font-size: .9rem; background: linear-gradient(transparent, rgba(0,0,0,.75)); }
 .carousel__arrow { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,.4); color: #fff; border: 0; border-radius: 999px; padding: .4rem .8rem; font-size: 1.2rem; cursor: pointer; transition: background .2s; }
 .carousel__arrow:hover { background: rgba(0,0,0,.6); }

@@ -10,10 +10,16 @@ import {
   getExtraPages,
   makeSection,
   normalizeExtraPages,
+  normalizeObjectFit,
+  normalizePosX,
+  normalizePosY,
   pageId,
   REPEATABLE_SECTIONS,
   SECTION_LABELS,
   type ExtraPage,
+  type ImagePosX,
+  type ImagePosY,
+  type ObjectFitMode,
   type Section,
   type SectionType,
   type SiteConfig,
@@ -1285,13 +1291,81 @@ function ItemsEditor({ section, onChange }: { section: Section; onChange: (fn: (
   );
 }
 
-type GalleryImg = { url: string; caption?: string; colSpan?: number; rowSpan?: number };
+type GalleryImg = {
+  url: string;
+  caption?: string;
+  colSpan?: number;
+  rowSpan?: number;
+  objectFit?: ObjectFitMode;
+  posX?: ImagePosX;
+  posY?: ImagePosY;
+};
+
+/** Controles por imagen: contain/cover + posición horizontal/vertical */
+function ImageFrameControls({
+  objectFit,
+  posX,
+  posY,
+  onChange,
+}: {
+  objectFit?: string;
+  posX?: string;
+  posY?: string;
+  onChange: (patch: { objectFit?: ObjectFitMode; posX?: ImagePosX; posY?: ImagePosY }) => void;
+}) {
+  const fit = normalizeObjectFit(objectFit);
+  const x = normalizePosX(posX);
+  const y = normalizePosY(posY);
+  return (
+    <div className="grid grid-cols-3 gap-1.5">
+      <div>
+        <Label className="text-[10px]">Ajuste</Label>
+        <select
+          value={fit}
+          onChange={(e) => onChange({ objectFit: e.target.value as ObjectFitMode })}
+          className="h-8 w-full rounded-md border border-slate-200 bg-white px-1.5 text-xs"
+        >
+          <option value="cover">Cover (recorta)</option>
+          <option value="contain">Contain (caber)</option>
+        </select>
+      </div>
+      <div>
+        <Label className="text-[10px]">Horizontal</Label>
+        <select
+          value={x}
+          onChange={(e) => onChange({ posX: e.target.value as ImagePosX })}
+          className="h-8 w-full rounded-md border border-slate-200 bg-white px-1.5 text-xs"
+        >
+          <option value="left">Izquierda</option>
+          <option value="center">Centro</option>
+          <option value="right">Derecha</option>
+        </select>
+      </div>
+      <div>
+        <Label className="text-[10px]">Vertical</Label>
+        <select
+          value={y}
+          onChange={(e) => onChange({ posY: e.target.value as ImagePosY })}
+          className="h-8 w-full rounded-md border border-slate-200 bg-white px-1.5 text-xs"
+        >
+          <option value="top">Arriba</option>
+          <option value="center">Centro</option>
+          <option value="bottom">Abajo</option>
+        </select>
+      </div>
+    </div>
+  );
+}
 
 function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn: (s: Section) => void) => void }) {
   const c = section.content;
   const cols = Math.min(10, Math.max(2, Number(c.columns) || 3));
   const images: GalleryImg[] = ((c.images as any[]) ?? [])
-    .map((i) => (typeof i === "string" ? { url: i, colSpan: 1, rowSpan: 1 } : i))
+    .map((i) =>
+      typeof i === "string"
+        ? { url: i, colSpan: 1, rowSpan: 1, objectFit: "cover" as const, posX: "center" as const, posY: "center" as const }
+        : i
+    )
     .filter((i) => i?.url);
   const max = 24;
   const set = (k: string, v: any) => onChange((s) => (s.content[k] = v));
@@ -1310,7 +1384,7 @@ function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn:
       c.maxWidth !== 0 &&
       c.maxWidth !== "full" &&
       c.maxWidth !== "0") ||
-    Number(c.maxCell ?? 0) > 0 ||
+    Number(c.maxCell ?? 300) !== 300 ||
     (c.rowHeight !== undefined && Number(c.rowHeight) !== 160);
   const [advancedOpen, setAdvancedOpen] = useState(hasAdvancedLayout || hasAdvancedSize);
 
@@ -1418,7 +1492,12 @@ function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn:
           <ImageField
             label="Agregar foto"
             value=""
-            onUploaded={(url) => setImages([...images, { url, caption: "", colSpan: 1, rowSpan: 1 }])}
+            onUploaded={(url) =>
+              setImages([
+                ...images,
+                { url, caption: "", colSpan: 1, rowSpan: 1, objectFit: "cover", posX: "center", posY: "center" },
+              ])
+            }
           />
         )}
         <div className="mt-2 space-y-2">
@@ -1426,29 +1505,45 @@ function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn:
             const cs = Number(img.colSpan) || 1;
             const rs = Number(img.rowSpan) || 1;
             return (
-              <div key={i} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={img.url} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
-                <Input
-                  placeholder="Texto de esta foto (opcional)"
-                  value={img.caption ?? ""}
-                  onChange={(e) => patchImage(i, { caption: e.target.value })}
+              <div key={i} className="space-y-2 rounded-lg border border-slate-200 bg-white p-2">
+                <div className="flex items-center gap-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={img.url}
+                    alt=""
+                    className="h-10 w-10 shrink-0 rounded"
+                    style={{
+                      objectFit: normalizeObjectFit(img.objectFit),
+                      objectPosition: `${normalizePosX(img.posX)} ${normalizePosY(img.posY)}`,
+                    }}
+                  />
+                  <Input
+                    placeholder="Texto de esta foto (opcional)"
+                    value={img.caption ?? ""}
+                    onChange={(e) => patchImage(i, { caption: e.target.value })}
+                  />
+                  <span
+                    className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                      cs > 1 || rs > 1 ? "bg-brand-teal/15 text-brand-navy" : "bg-slate-100 text-slate-500"
+                    }`}
+                    title="Tamaño en el grid (cambia en Ajustes avanzados)"
+                  >
+                    {cs}×{rs}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setImages(images.filter((_, j) => j !== i))}
+                    className="shrink-0 text-xs text-rose-500 hover:underline"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <ImageFrameControls
+                  objectFit={img.objectFit}
+                  posX={img.posX}
+                  posY={img.posY}
+                  onChange={(patch) => patchImage(i, patch)}
                 />
-                <span
-                  className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                    cs > 1 || rs > 1 ? "bg-brand-teal/15 text-brand-navy" : "bg-slate-100 text-slate-500"
-                  }`}
-                  title="Tamaño en el grid (cambia en Ajustes avanzados)"
-                >
-                  {cs}×{rs}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setImages(images.filter((_, j) => j !== i))}
-                  className="shrink-0 text-xs text-rose-500 hover:underline"
-                >
-                  ✕
-                </button>
               </div>
             );
           })}
@@ -1499,17 +1594,20 @@ function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn:
             <div>
               <Label>
                 Tamaño máx. celda 1×1 (
-                {Number(c.maxCell ?? 0) > 0 ? `${Number(c.maxCell)}px` : "sin límite"})
+                {Number(c.maxCell ?? 300) > 0 ? `${Number(c.maxCell ?? 300)}px` : "sin límite"})
               </Label>
               <input
                 type="range"
                 min={0}
                 max={400}
                 step={10}
-                value={Math.min(400, Math.max(0, Number(c.maxCell ?? 0)))}
+                value={Math.min(400, Math.max(0, Number(c.maxCell ?? 300)))}
                 onChange={(e) => set("maxCell", Number(e.target.value))}
                 className="w-full"
               />
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                Por defecto 300px. 0 = sin límite (ocupa todo el ancho disponible).
+              </p>
             </div>
 
             <div>
@@ -1677,11 +1775,18 @@ function LogoField({
 
 function CarouselEditor({ section, onChange }: { section: Section; onChange: (fn: (s: Section) => void) => void }) {
   const c = section.content;
-  const images: { url: string; caption?: string }[] = ((c.images as any[]) ?? [])
-    .map((i) => (typeof i === "string" ? { url: i } : i))
+  type CarouselImg = GalleryImg;
+  const images: CarouselImg[] = ((c.images as any[]) ?? [])
+    .map((i) =>
+      typeof i === "string"
+        ? { url: i, objectFit: "cover" as const, posX: "center" as const, posY: "center" as const }
+        : i
+    )
     .filter((i) => i?.url);
   const set = (k: string, v: any) => onChange((s) => (s.content[k] = v));
-  const setImages = (imgs: { url: string; caption?: string }[]) => set("images", imgs);
+  const setImages = (imgs: CarouselImg[]) => set("images", imgs);
+  const patchImage = (i: number, patch: Partial<CarouselImg>) =>
+    setImages(images.map((x, j) => (j === i ? { ...x, ...patch } : x)));
 
   return (
     <div className="space-y-3">
@@ -1702,25 +1807,71 @@ function CarouselEditor({ section, onChange }: { section: Section; onChange: (fn
       <div>
         <Label>Fotos ({images.length} de 15)</Label>
         {images.length < 15 && (
-          <ImageField label="Agregar foto" value="" onUploaded={(url) => setImages([...images, { url, caption: "" }])} />
+          <ImageField
+            label="Agregar foto"
+            value=""
+            onUploaded={(url) =>
+              setImages([...images, { url, caption: "", objectFit: "cover", posX: "center", posY: "center" }])
+            }
+          />
         )}
         <div className="mt-2 space-y-2">
           {images.map((img, i) => (
-            <div key={i} className="flex items-center gap-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={img.url} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
-              <Input
-                placeholder="Texto de esta foto (opcional)"
-                value={img.caption ?? ""}
-                onChange={(e) => setImages(images.map((x, j) => (j === i ? { ...x, caption: e.target.value } : x)))}
-              />
-              <div className="flex shrink-0 flex-col text-xs text-slate-400">
-                <button onClick={() => i > 0 && setImages(images.map((x, j) => (j === i - 1 ? images[i] : j === i ? images[i - 1] : x)))} disabled={i === 0} className="hover:text-slate-700 disabled:opacity-30">↑</button>
-                <button onClick={() => i < images.length - 1 && setImages(images.map((x, j) => (j === i + 1 ? images[i] : j === i ? images[i + 1] : x)))} disabled={i === images.length - 1} className="hover:text-slate-700 disabled:opacity-30">↓</button>
+            <div key={i} className="space-y-2 rounded-lg border border-slate-200 bg-white p-2">
+              <div className="flex items-center gap-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={img.url}
+                  alt=""
+                  className="h-10 w-10 shrink-0 rounded"
+                  style={{
+                    objectFit: normalizeObjectFit(img.objectFit),
+                    objectPosition: `${normalizePosX(img.posX)} ${normalizePosY(img.posY)}`,
+                  }}
+                />
+                <Input
+                  placeholder="Texto de esta foto (opcional)"
+                  value={img.caption ?? ""}
+                  onChange={(e) => patchImage(i, { caption: e.target.value })}
+                />
+                <div className="flex shrink-0 flex-col text-xs text-slate-400">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      i > 0 &&
+                      setImages(images.map((x, j) => (j === i - 1 ? images[i] : j === i ? images[i - 1] : x)))
+                    }
+                    disabled={i === 0}
+                    className="hover:text-slate-700 disabled:opacity-30"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      i < images.length - 1 &&
+                      setImages(images.map((x, j) => (j === i + 1 ? images[i] : j === i ? images[i + 1] : x)))
+                    }
+                    disabled={i === images.length - 1}
+                    className="hover:text-slate-700 disabled:opacity-30"
+                  >
+                    ↓
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setImages(images.filter((_, j) => j !== i))}
+                  className="shrink-0 text-xs text-rose-500 hover:underline"
+                >
+                  ✕
+                </button>
               </div>
-              <button onClick={() => setImages(images.filter((_, j) => j !== i))} className="shrink-0 text-xs text-rose-500 hover:underline">
-                ✕
-              </button>
+              <ImageFrameControls
+                objectFit={img.objectFit}
+                posX={img.posX}
+                posY={img.posY}
+                onChange={(patch) => patchImage(i, patch)}
+              />
             </div>
           ))}
         </div>

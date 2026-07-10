@@ -149,6 +149,25 @@ export const SECTION_LABELS: Record<SectionType, string> = {
 /** Secciones que se pueden repetir en la misma página. */
 export const REPEATABLE_SECTIONS = new Set<SectionType>(["custom", "iframe"]);
 
+// Ajuste de recorte por imagen (galería / carrusel)
+export type ObjectFitMode = "cover" | "contain";
+export type ImagePosX = "left" | "center" | "right";
+export type ImagePosY = "top" | "center" | "bottom";
+
+export function normalizeObjectFit(v: unknown): ObjectFitMode {
+  return v === "contain" ? "contain" : "cover";
+}
+export function normalizePosX(v: unknown): ImagePosX {
+  return v === "left" || v === "right" ? v : "center";
+}
+export function normalizePosY(v: unknown): ImagePosY {
+  return v === "top" || v === "bottom" ? v : "center";
+}
+/** CSS object-position: horizontal + vertical */
+export function cssObjectPosition(posX: ImagePosX, posY: ImagePosY): string {
+  return `${posX} ${posY}`;
+}
+
 /** Página extra (widget pagina-adicional): título + secciones propias + texto libre opcional. */
 export type ExtraPage = {
   id: string;
@@ -432,8 +451,8 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
         captionMode: "hover", // none | hover | always
         // Ancho máximo del bloque de la cuadrícula (px). 0 = 100% del contenedor.
         maxWidth: 960,
-        // Tamaño máximo de cada celda 1×1 (px). 0 = se reparte el ancho.
-        maxCell: 0,
+        // Tamaño máximo de cada celda 1×1 (px). 0 = se reparte el ancho; default 300.
+        maxCell: 300,
         // Alto de una fila del grid (px); define la proporción base 1×1
         rowHeight: 160,
       };
