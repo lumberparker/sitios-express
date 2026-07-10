@@ -1299,110 +1299,65 @@ function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn:
   const patchImage = (i: number, patch: Partial<GalleryImg>) =>
     setImages(images.map((x, j) => (j === i ? { ...x, ...patch } : x)));
 
+  // Si ya hay spans o tamaños custom, abrir avanzados por defecto
+  const hasAdvancedLayout = images.some(
+    (img) => (Number(img.colSpan) || 1) > 1 || (Number(img.rowSpan) || 1) > 1
+  );
+  const hasAdvancedSize =
+    (c.maxWidth !== undefined &&
+      c.maxWidth !== null &&
+      c.maxWidth !== "" &&
+      c.maxWidth !== 0 &&
+      c.maxWidth !== "full" &&
+      c.maxWidth !== "0") ||
+    Number(c.maxCell ?? 0) > 0 ||
+    (c.rowHeight !== undefined && Number(c.rowHeight) !== 160);
+  const [advancedOpen, setAdvancedOpen] = useState(hasAdvancedLayout || hasAdvancedSize);
+
+  const maxWidthLabel =
+    c.maxWidth === undefined ||
+    c.maxWidth === null ||
+    c.maxWidth === "" ||
+    c.maxWidth === 0 ||
+    c.maxWidth === "full" ||
+    c.maxWidth === "0"
+      ? "100%"
+      : `${Number(c.maxWidth)}px`;
+
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <Label>Columnas de la grilla</Label>
-          <select
-            value={cols}
-            onChange={(e) => set("columns", Number(e.target.value))}
-            className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
-          >
-            {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => (
-              <option key={n} value={n}>
-                {n} columnas
-              </option>
-            ))}
-          </select>
-          <p className="mt-0.5 text-[11px] text-slate-400">Base del layout. Cada foto puede ocupar varias celdas.</p>
-        </div>
-        <div>
-          <Label>Efecto al pasar el mouse</Label>
-          <select
-            value={c.hoverEffect ?? "zoom"}
-            onChange={(e) => set("hoverEffect", e.target.value)}
-            className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
-          >
-            <option value="none">Ninguno</option>
-            <option value="zoom">Zoom</option>
-            <option value="lift">Elevar con sombra</option>
-            <option value="gray">Gris → color</option>
-            <option value="dark">Oscuro → claro</option>
-          </select>
-        </div>
-      </div>
-
+      {/* —— Básico —— */}
       <div>
-        <Label>
-          Ancho de la cuadrícula (
-          {c.maxWidth === undefined ||
-          c.maxWidth === null ||
-          c.maxWidth === "" ||
-          c.maxWidth === 0 ||
-          c.maxWidth === "full" ||
-          c.maxWidth === "0"
-            ? "100%"
-            : `${Number(c.maxWidth)}px`}
-          )
-        </Label>
-        <input
-          type="range"
-          min={0}
-          max={1400}
-          step={20}
-          value={
-            c.maxWidth === undefined ||
-            c.maxWidth === null ||
-            c.maxWidth === "" ||
-            c.maxWidth === 0 ||
-            c.maxWidth === "full" ||
-            c.maxWidth === "0"
-              ? 0
-              : Math.min(1400, Math.max(0, Number(c.maxWidth)))
-          }
-          onChange={(e) => set("maxWidth", Number(e.target.value))}
-          className="w-full"
-        />
+        <Label>Tamaño del grid</Label>
+        <select
+          value={cols}
+          onChange={(e) => set("columns", Number(e.target.value))}
+          className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm font-medium"
+        >
+          {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => (
+            <option key={n} value={n}>
+              {n}×{n}
+            </option>
+          ))}
+        </select>
         <p className="mt-0.5 text-[11px] text-slate-400">
-          0 = todo el ancho disponible. Baja el valor (ej. 640–960) para una galería más compacta y centrada.
+          {cols}×{cols} — hasta {cols * cols} fotos en celdas 1×1 (en avanzados puedes hacer 2×1, 1×2, etc.)
         </p>
       </div>
 
       <div>
-        <Label>
-          Tamaño máx. celda 1×1 (
-          {Number(c.maxCell ?? 0) > 0 ? `${Number(c.maxCell)}px` : "sin límite"}
-          )
-        </Label>
-        <input
-          type="range"
-          min={0}
-          max={400}
-          step={10}
-          value={Math.min(400, Math.max(0, Number(c.maxCell ?? 0)))}
-          onChange={(e) => set("maxCell", Number(e.target.value))}
-          className="w-full"
-        />
-        <p className="mt-0.5 text-[11px] text-slate-400">
-          0 = el ancho se reparte entre columnas. Con límite, la grilla se centra.
-        </p>
-      </div>
-
-      <div>
-        <Label>Alto de fila base ({Number(c.rowHeight ?? 160)}px)</Label>
-        <input
-          type="range"
-          min={80}
-          max={320}
-          step={10}
-          value={Math.min(320, Math.max(80, Number(c.rowHeight ?? 160)))}
-          onChange={(e) => set("rowHeight", Number(e.target.value))}
-          className="w-full"
-        />
-        <p className="mt-0.5 text-[11px] text-slate-400">
-          Define la altura de una celda 1×1. Una foto de 2 filas mide el doble de alto.
-        </p>
+        <Label>Efecto al pasar el mouse</Label>
+        <select
+          value={c.hoverEffect ?? "zoom"}
+          onChange={(e) => set("hoverEffect", e.target.value)}
+          className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+        >
+          <option value="none">Ninguno</option>
+          <option value="zoom">Zoom</option>
+          <option value="lift">Elevar con sombra</option>
+          <option value="gray">Gris → color</option>
+          <option value="dark">Oscuro → claro</option>
+        </select>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -1455,9 +1410,6 @@ function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn:
         <Label>
           Fotos ({images.length} de {max})
         </Label>
-        <p className="mb-2 text-[11px] text-slate-500">
-          En cada foto elige cuántas <b>columnas</b> (ancho) y <b>filas</b> (alto) ocupa en la grilla. Ej: 2×1 = panorámica; 1×2 = vertical alta; 2×2 = grande.
-        </p>
         {images.length >= max ? (
           <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-700">
             Límite de {max} fotos. Quita una para agregar otra.
@@ -1471,65 +1423,160 @@ function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn:
         )}
         <div className="mt-2 space-y-2">
           {images.map((img, i) => {
-            const colSpan = Math.min(cols, Math.max(1, Number(img.colSpan) || 1));
-            const rowSpan = Math.min(cols, Math.max(1, Number(img.rowSpan) || 1));
+            const cs = Number(img.colSpan) || 1;
+            const rs = Number(img.rowSpan) || 1;
             return (
-              <div key={i} className="rounded-lg border border-slate-200 bg-white p-2 space-y-2">
-                <div className="flex items-center gap-2">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={img.url} alt="" className="h-12 w-12 shrink-0 rounded object-cover" />
-                  <Input
-                    placeholder="Texto de esta foto (opcional)"
-                    value={img.caption ?? ""}
-                    onChange={(e) => patchImage(i, { caption: e.target.value })}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setImages(images.filter((_, j) => j !== i))}
-                    className="shrink-0 text-xs text-rose-500 hover:underline"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label className="text-[11px]">Ancho (columnas)</Label>
-                    <select
-                      value={colSpan}
-                      onChange={(e) => patchImage(i, { colSpan: Number(e.target.value) })}
-                      className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-xs"
-                    >
-                      {Array.from({ length: cols }, (_, n) => n + 1).map((n) => (
-                        <option key={n} value={n}>
-                          {n} {n === 1 ? "columna" : "columnas"}
-                          {n === cols ? " (todo el ancho)" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <Label className="text-[11px]">Alto (filas)</Label>
-                    <select
-                      value={rowSpan}
-                      onChange={(e) => patchImage(i, { rowSpan: Number(e.target.value) })}
-                      className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-xs"
-                    >
-                      {Array.from({ length: cols }, (_, n) => n + 1).map((n) => (
-                        <option key={n} value={n}>
-                          {n} {n === 1 ? "fila" : "filas"}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <p className="text-[10px] text-slate-400">
-                  Ocupa <b>{colSpan}×{rowSpan}</b> celdas
-                  {colSpan > 1 || rowSpan > 1 ? " · layout tipo bento" : ""}
-                </p>
+              <div key={i} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={img.url} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
+                <Input
+                  placeholder="Texto de esta foto (opcional)"
+                  value={img.caption ?? ""}
+                  onChange={(e) => patchImage(i, { caption: e.target.value })}
+                />
+                <span
+                  className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                    cs > 1 || rs > 1 ? "bg-brand-teal/15 text-brand-navy" : "bg-slate-100 text-slate-500"
+                  }`}
+                  title="Tamaño en el grid (cambia en Ajustes avanzados)"
+                >
+                  {cs}×{rs}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setImages(images.filter((_, j) => j !== i))}
+                  className="shrink-0 text-xs text-rose-500 hover:underline"
+                >
+                  ✕
+                </button>
               </div>
             );
           })}
         </div>
+      </div>
+
+      {/* —— Avanzado: tamaño del grid y spans por foto —— */}
+      <div className="rounded-xl border border-dashed border-slate-300">
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          className="flex w-full items-center justify-between px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
+        >
+          <span>Ajustes avanzados del grid</span>
+          <span className="text-slate-400">{advancedOpen ? "▾" : "▸"}</span>
+        </button>
+        {advancedOpen && (
+          <div className="space-y-3 border-t border-slate-200 p-3">
+            <p className="text-[11px] text-slate-500">
+              Controla el tamaño del grid y cuántas celdas ocupa cada foto (layout tipo bento: 2×1 panorámica, 1×2 vertical…).
+            </p>
+
+            <div>
+              <Label>Ancho del grid ({maxWidthLabel})</Label>
+              <input
+                type="range"
+                min={0}
+                max={1400}
+                step={20}
+                value={
+                  c.maxWidth === undefined ||
+                  c.maxWidth === null ||
+                  c.maxWidth === "" ||
+                  c.maxWidth === 0 ||
+                  c.maxWidth === "full" ||
+                  c.maxWidth === "0"
+                    ? 0
+                    : Math.min(1400, Math.max(0, Number(c.maxWidth)))
+                }
+                onChange={(e) => set("maxWidth", Number(e.target.value))}
+                className="w-full"
+              />
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                0 = todo el ancho. Baja el valor (ej. 640–960) para un grid más compacto y centrado.
+              </p>
+            </div>
+
+            <div>
+              <Label>
+                Tamaño máx. celda 1×1 (
+                {Number(c.maxCell ?? 0) > 0 ? `${Number(c.maxCell)}px` : "sin límite"})
+              </Label>
+              <input
+                type="range"
+                min={0}
+                max={400}
+                step={10}
+                value={Math.min(400, Math.max(0, Number(c.maxCell ?? 0)))}
+                onChange={(e) => set("maxCell", Number(e.target.value))}
+                className="w-full"
+              />
+            </div>
+
+            <div>
+              <Label>Alto de fila base ({Number(c.rowHeight ?? 160)}px)</Label>
+              <input
+                type="range"
+                min={80}
+                max={320}
+                step={10}
+                value={Math.min(320, Math.max(80, Number(c.rowHeight ?? 160)))}
+                onChange={(e) => set("rowHeight", Number(e.target.value))}
+                className="w-full"
+              />
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                Altura de una celda 1×1. Una foto de 2 filas mide el doble de alto.
+              </p>
+            </div>
+
+            {images.length > 0 && (
+              <div className="space-y-2">
+                <Label>Proporción de cada foto</Label>
+                <p className="text-[11px] text-slate-500">
+                  Columnas = ancho · Filas = alto. Ej: 2×1 panorámica, 1×3 vertical, 2×2 grande.
+                </p>
+                {images.map((img, i) => {
+                  const colSpan = Math.min(cols, Math.max(1, Number(img.colSpan) || 1));
+                  const rowSpan = Math.min(cols, Math.max(1, Number(img.rowSpan) || 1));
+                  return (
+                    <div key={i} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={img.url} alt="" className="h-9 w-9 shrink-0 rounded object-cover" />
+                      <div className="min-w-0 flex-1 grid grid-cols-2 gap-1.5">
+                        <select
+                          value={colSpan}
+                          onChange={(e) => patchImage(i, { colSpan: Number(e.target.value) })}
+                          className="h-8 w-full rounded-md border border-slate-200 bg-white px-1.5 text-xs"
+                          title="Ancho en columnas"
+                        >
+                          {Array.from({ length: cols }, (_, n) => n + 1).map((n) => (
+                            <option key={n} value={n}>
+                              {n} col
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={rowSpan}
+                          onChange={(e) => patchImage(i, { rowSpan: Number(e.target.value) })}
+                          className="h-8 w-full rounded-md border border-slate-200 bg-white px-1.5 text-xs"
+                          title="Alto en filas"
+                        >
+                          {Array.from({ length: cols }, (_, n) => n + 1).map((n) => (
+                            <option key={n} value={n}>
+                              {n} fil
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <span className="shrink-0 text-[10px] font-medium text-slate-500">
+                        {colSpan}×{rowSpan}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

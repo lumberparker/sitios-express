@@ -422,7 +422,7 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
       return {
         title: "Galería",
         images: [],
-        columns: 3, // columnas de la grilla base
+        columns: 3, // columnas del grid base
         gapX: 12,
         gapY: 12,
         borderWidth: 0,
@@ -434,7 +434,7 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
         maxWidth: 960,
         // Tamaño máximo de cada celda 1×1 (px). 0 = se reparte el ancho.
         maxCell: 0,
-        // Alto de una fila de la grilla (px); define la proporción base 1×1
+        // Alto de una fila del grid (px); define la proporción base 1×1
         rowHeight: 160,
       };
     case "carousel":

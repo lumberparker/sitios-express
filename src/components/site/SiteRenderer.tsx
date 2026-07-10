@@ -624,9 +624,9 @@ function SectionBody({
 export type GalleryImage = {
   url: string;
   caption?: string;
-  /** Cuántas columnas de la grilla ocupa (1 = celda normal). */
+  /** Cuántas columnas del grid ocupa (1 = celda normal). */
   colSpan?: number;
-  /** Cuántas filas de la grilla ocupa (1 = celda normal). */
+  /** Cuántas filas del grid ocupa (1 = celda normal). */
   rowSpan?: number;
 };
 
@@ -679,7 +679,7 @@ function GallerySection({ section, heading }: { section: Section; heading: React
       ? 0
       : Math.min(1400, Math.max(320, Number(maxWidthRaw) || 960));
   const maxCell = Math.min(600, Math.max(0, Number(c.maxCell ?? 0) || 0));
-  // Alto de una fila de la grilla (= celda 1×1). Con maxCell se alinea al ancho de celda.
+  // Alto de una fila del grid (= celda 1×1). Con maxCell se alinea al ancho de celda.
   const rowTrack = maxCell > 0 ? maxCell : Math.min(220, Math.max(100, Number(c.rowHeight ?? 160) || 160));
 
   // Reglas dinámicas (hover/caption/spans) con alcance por sección
