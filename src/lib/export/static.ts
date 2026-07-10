@@ -1,8 +1,8 @@
 // Generador de exportación estática: SiteConfig → { archivo: contenido }.
 // Produce HTML/CSS/JS puro, sin dependencias, listo para cualquier hosting.
 // Convención de clases: BEM (bloque__elemento--modificador, estados .is-*).
-// Las imágenes subidas (/uploads/...) se reescriben a assets/ y el endpoint
-// de export las incluye en el .zip.
+// Imágenes subidas → assets/images/
+// Estilos: styles.css importa styles/*.css (header, hero, map, …)
 
 import type { SiteConfig, Section, TemplateConfig, ExtraPage as ConfigExtraPage } from "@/lib/site-config";
 import {
@@ -36,18 +36,22 @@ function slugify(s: string): string {
 }
 
 // Imágenes subidas: en dev viven en /uploads/, en producción en Vercel Blob.
-// Ambas se reescriben a assets/ y el endpoint de export las mete al .zip
-// para que el sitio descargado sea autocontenido.
+// Se reescriben a assets/images/ y el endpoint de export las mete al .zip.
 const BLOB_URL_RE = /^https:\/\/[^/]+\.public\.blob\.vercel-storage\.com\//;
 
 export function isUploadedAsset(url: string): boolean {
   return url.startsWith("/uploads/") || BLOB_URL_RE.test(url);
 }
 
-/** /uploads/foo.png o URL de Blob → assets/foo.png */
+/** Nombre de archivo de una URL de upload/blob (sin path). */
+export function assetFileName(url: string): string {
+  return url.split("/").pop() || "image";
+}
+
+/** /uploads/foo.png o URL de Blob → assets/images/foo.png */
 export function assetPath(url: string): string {
   if (!isUploadedAsset(url)) return url;
-  return `assets/${url.split("/").pop()}`;
+  return `assets/images/${assetFileName(url)}`;
 }
 
 export function collectUploads(config: SiteConfig): string[] {
@@ -537,6 +541,12 @@ function whatsappHtml(config: SiteConfig): string {
 }
 
 function htmlShell(config: SiteConfig, tpl: TemplateConfig, title: string, body: string): string {
+  // Fuentes: preconnect + stylesheet (también en styles/fonts.css para editar offline)
+  const fontLinks = tpl.fonts.googleUrl
+    ? `  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="${esc(tpl.fonts.googleUrl)}" rel="stylesheet">`
+    : "";
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -545,9 +555,8 @@ function htmlShell(config: SiteConfig, tpl: TemplateConfig, title: string, body:
   <title>${esc(title)}</title>
   <meta name="description" content="${esc(config.business.tagline || config.business.name)}">
   ${config.business.faviconUrl ? `<link rel="icon" type="image/png" href="${assetPath(config.business.faviconUrl)}">` : ""}
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="${tpl.fonts.googleUrl}" rel="stylesheet">
+${fontLinks}
+  <!-- Estilos: styles.css importa cada bloque (header, hero, map…). Edita styles/fonts.css para cambiar tipografías. -->
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -599,14 +608,73 @@ ${pageSections.map((s, i) => renderSection(s, tpl, i, config)).join("\n\n")}
     files[page.file] = htmlShell(config, tpl, `${page.title} — ${config.business.name}`, body);
   }
 
-  files["styles.css"] = buildCss(config, tpl);
+  // CSS modular: styles.css + styles/*.css
+  Object.assign(files, buildStyleBundle(config, tpl));
   files["script.js"] = buildJs();
   return files;
 }
 
-function buildCss(config: SiteConfig, tpl: TemplateConfig): string {
-  return `/* ${esc(config.business.name)} — generado por Sitios Web Express
-   Convención de clases: BEM (bloque__elemento--modificador, estados .is-*) */
+/**
+ * Genera styles.css (entrada) + un archivo por bloque en styles/.
+ * Así se puede editar p.ej. solo styles/hero.css sin tocar el resto.
+ */
+function buildStyleBundle(config: SiteConfig, tpl: TemplateConfig): Record<string, string> {
+  const modules: { file: string; css: string }[] = [
+    { file: "styles/fonts.css", css: cssFonts(tpl) },
+    { file: "styles/base.css", css: cssBase(config, tpl) },
+    { file: "styles/header.css", css: cssHeader() },
+    { file: "styles/hero.css", css: cssHero() },
+    { file: "styles/about.css", css: cssAbout() },
+    { file: "styles/products.css", css: cssProducts() },
+    { file: "styles/testimonials.css", css: cssTestimonials() },
+    { file: "styles/gallery.css", css: cssGallery() },
+    { file: "styles/carousel.css", css: cssCarousel() },
+    { file: "styles/map.css", css: cssMap() },
+    { file: "styles/iframe.css", css: cssIframe() },
+    { file: "styles/faq.css", css: cssFaq() },
+    { file: "styles/contact.css", css: cssContact() },
+    { file: "styles/quote.css", css: cssQuote() },
+    { file: "styles/page.css", css: cssPage() },
+    { file: "styles/footer.css", css: cssFooter() },
+    { file: "styles/whatsapp.css", css: cssWhatsapp() },
+    { file: "styles/reveal.css", css: cssReveal() },
+  ];
+
+  const entry = `/* ${config.business.name} — generado por Sitios Web Express
+ * Entrada de estilos. Cada bloque vive en styles/<nombre>.css
+ * Tipografías: edita styles/fonts.css (código de Google Fonts).
+ * Convención de clases: BEM (bloque__elemento--modificador).
+ */
+${modules.map((m) => `@import url("${m.file}");`).join("\n")}
+`;
+
+  const out: Record<string, string> = { "styles.css": entry };
+  for (const m of modules) out[m.file] = m.css;
+  return out;
+}
+
+function cssFonts(tpl: TemplateConfig): string {
+  const url = tpl.fonts.googleUrl || "";
+  return `/* Tipografías del sitio
+ * - Cambia los nombres en --font-heading / --font-body (también en base.css vía :root).
+ * - Para otras fuentes de Google Fonts:
+ *   1) Ve a https://fonts.google.com y elige familias
+ *   2) Copia la URL del embed (css2?family=...)
+ *   3) Sustituye la línea @import de abajo
+ *   4) Actualiza --font-heading y --font-body en styles/base.css
+ */
+${url ? `@import url("${url}");` : "/* Sin URL de Google Fonts — define fuentes del sistema en base.css */"}
+
+/* Alias locales (base.css redefine :root con la paleta; estos sirven de documentación) */
+:root {
+  --font-heading: '${tpl.fonts.heading}', serif;
+  --font-body: '${tpl.fonts.body}', system-ui, sans-serif;
+}
+`;
+}
+
+function cssBase(config: SiteConfig, tpl: TemplateConfig): string {
+  return `/* Base + variables de marca — ${esc(config.business.name)} */
 :root {
   --primary: ${tpl.palette.primary};
   --secondary: ${tpl.palette.secondary};
@@ -625,23 +693,23 @@ img { max-width: 100%; display: block; }
 h1, h2, h3 { font-family: var(--font-heading); line-height: 1.15; letter-spacing: -0.01em; }
 section { padding: 6rem 0; }
 
-/* Layout */
 .container { max-width: 1100px; margin: 0 auto; padding: 0 1.5rem; }
 .container--narrow { max-width: 720px; }
 .container--center { text-align: center; }
 
-/* Bloque: section (títulos comunes) */
 .section__title { font-size: clamp(1.8rem, 4vw, 2.6rem); }
 .section__title--center { text-align: center; }
 .section__lead { font-size: 1.15rem; opacity: .8; max-width: 42rem; margin: 1.2rem auto 0; }
 .section__lead--center { text-align: center; }
 .section__rule { width: 64px; height: 4px; border-radius: 2px; background: var(--accent); margin-top: .6rem; }
 
-/* Bloque: button */
 .button { display: inline-block; padding: 1rem 2.6rem; border: 0; border-radius: 999px; background: var(--accent); color: #fff; font-family: var(--font-body); font-size: 1.05rem; font-weight: 600; text-decoration: none; cursor: pointer; box-shadow: 0 10px 30px color-mix(in srgb, var(--accent) 35%, transparent); transition: transform .2s; }
 .button:hover, .button:focus-visible { transform: scale(1.05); }
+`;
+}
 
-/* Bloque: header */
+function cssHeader(): string {
+  return `/* Header + navegación */
 .header { position: sticky; top: 0; z-index: 40; background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid color-mix(in srgb, var(--text) 8%, transparent); }
 .header__inner { display: flex; align-items: center; justify-content: space-between; padding-top: .9rem; padding-bottom: .9rem; }
 .header__brand { text-decoration: none; }
@@ -678,7 +746,6 @@ section { padding: 6rem 0; }
 .header__burger[aria-expanded="true"] .header__burger-line:nth-child(2) { opacity: 0; }
 .header__burger[aria-expanded="true"] .header__burger-line:nth-child(3) { transform: translate(-50%, -50%) rotate(-45deg); }
 
-/* Bloque: nav */
 .nav--desktop { display: flex; gap: 1.6rem; }
 .nav__link { color: var(--text); text-decoration: none; font-size: .92rem; font-weight: 500; opacity: .8; transition: opacity .2s; }
 .nav__link:hover, .nav__link:focus-visible { opacity: 1; }
@@ -692,21 +759,33 @@ section { padding: 6rem 0; }
   .nav--mobile { display: flex; }
   section { padding: 4rem 0; }
 }
+`;
+}
 
-/* Bloque: hero */
+function cssHero(): string {
+  return `/* Hero */
 .hero { padding: 9rem 0; }
 .hero__inner { text-align: center; }
 .hero__title { font-size: clamp(2.5rem, 7vw, 4.5rem); }
 .hero__subtitle { font-size: 1.15rem; opacity: .8; max-width: 42rem; margin: 1.2rem auto 0; }
 .hero__cta { margin-top: 2.2rem; }
+`;
+}
 
-/* Bloque: about */
+function cssAbout(): string {
+  return `/* About / personalizada */
 .about__grid { display: grid; gap: 3rem; align-items: center; }
 @media (min-width: 768px) { .about__grid { grid-template-columns: 1fr 1fr; } }
 .about__prose { margin-top: 1.4rem; white-space: pre-line; opacity: .88; }
 .about__image { border-radius: 24px; object-fit: cover; max-height: 420px; width: 100%; }
+.about__text--center { text-align: center; }
+.about__text--center .section__rule { margin-left: auto; margin-right: auto; }
+.about__text--center .about__prose { max-width: 42rem; margin-left: auto; margin-right: auto; }
+`;
+}
 
-/* Bloque: cards / card */
+function cssProducts(): string {
+  return `/* Productos / tarjetas genéricas */
 .cards { display: grid; gap: 2rem; margin-top: 3rem; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .cards--two { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
 .card { background: var(--surface); color: var(--text); border-radius: var(--card-radius, 20px); box-shadow: var(--card-shadow); border: var(--card-border); overflow: hidden; transition: transform .25s; }
@@ -717,22 +796,26 @@ section { padding: 6rem 0; }
 .card__title { font-size: 1.15rem; }
 .card__text { margin-top: .5rem; font-size: .92rem; opacity: .78; }
 .card__price { margin-top: 1rem; font-size: 1.3rem; font-weight: 700; color: var(--accent); }
+`;
+}
 
-/* Bloque: testimonial */
+function cssTestimonials(): string {
+  return `/* Testimonios */
 .testimonial__mark { font-size: 2.6rem; line-height: 1; color: var(--accent); }
 .testimonial__text { font-style: italic; opacity: .88; }
 .testimonial__author { margin-top: 1rem; font-size: .9rem; }
+`;
+}
 
-/* Bloque: gallery bento (spans, espaciados y borde van inline desde el builder) */
+function cssGallery(): string {
+  return `/* Galería (grid bento; spans y gaps inline desde el builder) */
 .gallery { display: grid; margin-top: 3rem; grid-auto-flow: dense; }
 .gallery__item { position: relative; overflow: hidden; border-radius: 16px; margin: 0; min-width: 0; min-height: 0; width: 100%; height: 100%; background: rgba(0,0,0,.06); }
 .gallery__image { width: 100%; height: 100%; object-fit: cover; object-position: center center; display: block; border-radius: 16px; transition: transform .35s ease, filter .35s ease; }
 .gallery__caption { position: absolute; left: 0; right: 0; bottom: 0; padding: .9rem; color: #fff; font-size: .85rem; background: linear-gradient(transparent, rgba(0,0,0,.75)); border-radius: 0 0 16px 16px; transition: opacity .3s; }
-/* Modificadores: texto sobre la imagen */
 .gallery--cap-hover .gallery__caption { opacity: 0; }
 .gallery--cap-hover .gallery__item:hover .gallery__caption { opacity: 1; }
 .gallery--cap-none .gallery__caption { display: none; }
-/* Modificadores: efecto hover */
 .gallery--fx-zoom .gallery__item:hover .gallery__image { transform: scale(1.07); }
 .gallery--fx-lift .gallery__item { transition: transform .3s, box-shadow .3s; }
 .gallery--fx-lift .gallery__item:hover { transform: translateY(-6px); box-shadow: 0 16px 32px rgba(0,0,0,.25); }
@@ -744,12 +827,14 @@ section { padding: 6rem 0; }
   .gallery { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
   .gallery__item { grid-column: span 1 !important; grid-row: span 1 !important; }
 }
+`;
+}
 
-/* Bloque: carousel (autoplay via script.js) */
+function cssCarousel(): string {
+  return `/* Carrusel */
 .carousel { position: relative; overflow: hidden; margin-top: 2rem; }
 .carousel__track { display: flex; transition: transform .7s ease; }
-.carousel__slide { position: relative; min-width: 100%; }
-.carousel__slide { background: rgba(0,0,0,.06); }
+.carousel__slide { position: relative; min-width: 100%; background: rgba(0,0,0,.06); }
 .carousel__image { width: 100%; height: 100%; object-fit: cover; object-position: center center; display: block; }
 .carousel__caption { position: absolute; left: 0; right: 0; bottom: 0; padding: 1.2rem; color: #fff; font-size: .9rem; background: linear-gradient(transparent, rgba(0,0,0,.75)); }
 .carousel__arrow { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,.4); color: #fff; border: 0; border-radius: 999px; padding: .4rem .8rem; font-size: 1.2rem; cursor: pointer; transition: background .2s; }
@@ -760,26 +845,42 @@ section { padding: 6rem 0; }
 .carousel__dot { width: 8px; height: 8px; border-radius: 999px; border: 0; padding: 0; background: rgba(255,255,255,.45); cursor: pointer; transition: all .25s; }
 .carousel__dot.is-active { width: 16px; background: #fff; }
 @media (max-width: 640px) { .carousel__slide { height: 240px !important; } }
+`;
+}
 
-/* Bloque: map */
+function cssMap(): string {
+  return `/* Mapa */
 .map__frame { width: 100%; height: 380px; border: 0; border-radius: 20px; margin-top: 2rem; }
-/* Bloque: iframe genérico */
+`;
+}
+
+function cssIframe(): string {
+  return `/* Iframe / embed genérico */
 .iframe-section { padding: 4rem 0; }
 .iframe-section__frame { width: 100%; border: 0; border-radius: 16px; margin-top: 1.5rem; background: rgba(0,0,0,.04); display: block; }
+`;
+}
 
-/* Bloque: faq */
+function cssFaq(): string {
+  return `/* FAQ */
 .faq__item { margin-top: 1rem; }
 .faq__question { cursor: pointer; font-weight: 600; list-style: none; }
 .faq__plus { color: var(--accent); margin-right: .5rem; }
 .faq__answer { margin-top: .8rem; }
+`;
+}
 
-/* Bloque: form */
+function cssContact(): string {
+  return `/* Formulario de contacto */
 .form { display: grid; gap: 1rem; margin-top: 2.5rem; }
 .form__input, .form__textarea { width: 100%; padding: .85rem 1rem; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--text) 20%, transparent); background: transparent; color: inherit; font-family: inherit; font-size: .95rem; }
 .form__input:focus, .form__textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .form__submit { margin-top: .4rem; width: 100%; }
+`;
+}
 
-/* Bloque: quote (cotizador por categorías + cantidad) */
+function cssQuote(): string {
+  return `/* Cotizador */
 .quote__box { margin-top: 2.5rem; }
 .quote__base { color: var(--muted); font-size: .9rem; margin-bottom: 1rem; }
 .quote__category { margin-top: 1.5rem; }
@@ -799,16 +900,19 @@ section { padding: 6rem 0; }
 .quote__qty-input::-webkit-outer-spin-button, .quote__qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .quote__total { display: flex; justify-content: space-between; align-items: center; margin-top: 1.4rem; padding-top: 1rem; border-top: 1px solid color-mix(in srgb, var(--text) 10%, transparent); font-weight: 600; }
 .quote__total-amount { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
+`;
+}
 
-/* Bloque: page (páginas adicionales) */
+function cssPage(): string {
+  return `/* Páginas adicionales */
 .page { min-height: 55vh; }
 .page__title { font-size: clamp(2rem, 5vw, 3.2rem); text-align: center; }
 .page__content { margin-top: 1.6rem; opacity: .88; text-align: center; max-width: 42rem; margin-left: auto; margin-right: auto; }
-.about__text--center { text-align: center; }
-.about__text--center .section__rule { margin-left: auto; margin-right: auto; }
-.about__text--center .about__prose { max-width: 42rem; margin-left: auto; margin-right: auto; }
+`;
+}
 
-/* Bloque: footer */
+function cssFooter(): string {
+  return `/* Footer */
 .footer { background: color-mix(in srgb, var(--text) 92%, black); color: var(--bg); font-size: .9rem; }
 .footer__inner { display: flex; flex-direction: column; align-items: center; gap: 1.4rem; padding: 3rem 1.5rem; text-align: center; }
 @media (min-width: 768px) { .footer__inner { flex-direction: row; justify-content: space-between; text-align: left; } }
@@ -816,12 +920,18 @@ section { padding: 6rem 0; }
 .footer__social { display: flex; gap: 1.2rem; }
 .footer__social-link { color: inherit; text-transform: capitalize; }
 .footer__copyright { opacity: .6; }
+`;
+}
 
-/* Bloque: wa-button (WhatsApp flotante) */
+function cssWhatsapp(): string {
+  return `/* Botón flotante WhatsApp */
 .wa-button { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 50; width: 56px; height: 56px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: #25D366; box-shadow: 0 8px 24px rgba(0,0,0,.3); transition: transform .2s; }
 .wa-button:hover { transform: scale(1.1); }
+`;
+}
 
-/* Utilidad: reveal (animación al hacer scroll) */
+function cssReveal(): string {
+  return `/* Animación al scroll */
 .reveal { opacity: 0; transform: translateY(24px); transition: opacity .6s ease, transform .6s ease; }
 .reveal.is-visible { opacity: 1; transform: none; }
 @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } }

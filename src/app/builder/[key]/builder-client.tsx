@@ -964,14 +964,23 @@ function FontsEditor({ config, update }: { config: SiteConfig; update: (fn: (c: 
       : -1;
 
   function applyEmbed() {
-    // Acepta el <link> completo de Google Fonts o solo la URL
-    const match = embedDraft.match(/href="([^"]+)"/) ?? embedDraft.match(/(https:\/\/fonts\.googleapis\.com\/css2[^\s"'<>]+)/);
-    const url = match?.[1] ?? match?.[0] ?? "";
+    // Acepta: <link href="...">, @import url("..."), o la URL sola
+    const raw = embedDraft.trim();
+    const match =
+      raw.match(/href=["'](https:\/\/fonts\.googleapis\.com\/[^"']+)["']/) ||
+      raw.match(/@import\s+url\(["']?(https:\/\/fonts\.googleapis\.com\/[^"')\s]+)["']?\)/) ||
+      raw.match(/(https:\/\/fonts\.googleapis\.com\/css2?[^\s"'<>]+)/);
+    const url = (match?.[1] ?? "").replace(/&amp;/g, "&");
     if (!url.startsWith("https://fonts.googleapis.com/")) {
-      alert("Pega el código embed (o la URL) de Google Fonts — debe apuntar a fonts.googleapis.com");
+      alert("Pega el código embed de Google Fonts (el <link>, un @import, o la URL css2?family=…).");
       return;
     }
-    setTheme({ fontEmbedUrl: url });
+    // Intentar rellenar nombres de familia desde la URL si el usuario no los escribió
+    const families = [...url.matchAll(/family=([^&:]+)/g)].map((m) => decodeURIComponent(m[1].replace(/\+/g, " ")));
+    const patch: Partial<typeof theme> = { fontEmbedUrl: url };
+    if (!theme.fontHeading.trim() && families[0]) patch.fontHeading = families[0];
+    if (!theme.fontBody.trim() && (families[1] || families[0])) patch.fontBody = families[1] || families[0];
+    setTheme(patch);
   }
 
   return (
@@ -996,13 +1005,28 @@ function FontsEditor({ config, update }: { config: SiteConfig; update: (fn: (c: 
             ))}
           </select>
           <button type="button" onClick={() => setCustom(true)} className="mt-2 text-xs text-brand-blue hover:underline">
-            Usar otra fuente de Google Fonts →
+            Pegar código de Google Fonts (personalizado) →
           </button>
+          {theme.fontEmbedUrl && (
+            <p className="mt-1.5 truncate text-[11px] text-emerald-700" title={theme.fontEmbedUrl}>
+              ✓ Embed activo: {theme.fontHeading || "…"} / {theme.fontBody || "…"}
+            </p>
+          )}
         </>
       ) : (
         <div className="space-y-2">
-          <Label className="text-xs">Pega el código embed de Google Fonts (el &lt;link&gt;)</Label>
-          <Textarea rows={3} value={embedDraft} onChange={(e) => setEmbedDraft(e.target.value)} placeholder={'<link href="https://fonts.googleapis.com/css2?family=..." rel="stylesheet">'} className="font-mono text-xs" />
+          <Label className="text-xs">Código embed de Google Fonts</Label>
+          <Textarea
+            rows={4}
+            value={embedDraft}
+            onChange={(e) => setEmbedDraft(e.target.value)}
+            placeholder={'<link href="https://fonts.googleapis.com/css2?family=Lobster&family=Lato&display=swap" rel="stylesheet">'}
+            className="font-mono text-xs"
+          />
+          <p className="text-[11px] text-slate-500">
+            En <b>fonts.google.com</b> elige 1–2 familias → <b>Get embed code</b> → pega aquí el &lt;link&gt; (o la URL, o un{" "}
+            <code className="rounded bg-slate-200 px-1">@import</code>).
+          </p>
           <div className="grid grid-cols-2 gap-2">
             <div>
               <Label className="text-xs">Fuente de títulos</Label>
@@ -1014,13 +1038,24 @@ function FontsEditor({ config, update }: { config: SiteConfig; update: (fn: (c: 
             </div>
           </div>
           <div className="flex gap-2">
-            <Button size="sm" variant="secondary" onClick={applyEmbed}>Aplicar</Button>
-            <Button size="sm" variant="ghost" onClick={() => { setCustom(false); setTheme({ fontHeading: "", fontBody: "", fontEmbedUrl: "" }); }}>
+            <Button size="sm" variant="secondary" onClick={applyEmbed}>
+              Aplicar fuentes
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setCustom(false);
+                setEmbedDraft("");
+                setTheme({ fontHeading: "", fontBody: "", fontEmbedUrl: "" });
+              }}
+            >
               Volver a presets
             </Button>
           </div>
           <p className="text-[11px] text-slate-400">
-            En fonts.google.com elige tu fuente → "Get embed code" → copia el bloque &lt;link&gt; y escribe los nombres tal cual aparecen.
+            Al exportar el .zip, las fuentes quedan en <code className="rounded bg-slate-200 px-1">styles/fonts.css</code> para
+            editarlas a mano.
           </p>
         </div>
       )}
