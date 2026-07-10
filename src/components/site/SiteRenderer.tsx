@@ -632,20 +632,21 @@ export type GalleryImage = {
 
 /** Acepta el formato viejo (string[]) y el nuevo ([{ url, caption, colSpan, rowSpan }]). */
 export function normalizeGalleryImages(raw: any, maxCols = 10): GalleryImage[] {
-  return ((raw as any[]) ?? [])
-    .map((i) => {
-      if (typeof i === "string") return { url: i, colSpan: 1, rowSpan: 1 };
-      if (!i?.url) return null;
-      const colSpan = Math.min(maxCols, Math.max(1, Number(i.colSpan) || 1));
-      const rowSpan = Math.min(maxCols, Math.max(1, Number(i.rowSpan) || 1));
-      return {
-        url: i.url as string,
-        caption: i.caption ? String(i.caption) : "",
-        colSpan,
-        rowSpan,
-      };
-    })
-    .filter((i): i is GalleryImage => Boolean(i?.url));
+  const out: GalleryImage[] = [];
+  for (const i of (raw as any[]) ?? []) {
+    if (typeof i === "string") {
+      if (i) out.push({ url: i, colSpan: 1, rowSpan: 1 });
+      continue;
+    }
+    if (!i?.url) continue;
+    out.push({
+      url: String(i.url),
+      caption: i.caption ? String(i.caption) : "",
+      colSpan: Math.min(maxCols, Math.max(1, Number(i.colSpan) || 1)),
+      rowSpan: Math.min(maxCols, Math.max(1, Number(i.rowSpan) || 1)),
+    });
+  }
+  return out;
 }
 
 function GallerySection({ section, heading }: { section: Section; heading: React.CSSProperties }) {
