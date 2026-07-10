@@ -42,7 +42,16 @@ export function BuilderClient({
   template: { name: string; basePrice: number };
   catalog: CatalogWidget[];
 }) {
-  const [config, setConfig] = useState<SiteConfig>(initialConfig);
+  const [config, setConfig] = useState<SiteConfig>(() => {
+    // Si un sitio viejo tenía ambos montajes, dejar solo el de dominio propio
+    const c = structuredClone(initialConfig);
+    const hasCon = c.widgets.some((w) => w.widgetId === "montaje-con-dominio");
+    const hasSin = c.widgets.some((w) => w.widgetId === "montaje-sin-dominio");
+    if (hasCon && hasSin) {
+      c.widgets = c.widgets.filter((w) => w.widgetId !== "montaje-sin-dominio");
+    }
+    return c;
+  });
   const [status, setStatus] = useState(siteStatus);
   const [paidTotal, setPaidTotal] = useState(initialPaidTotal);
   const [tab, setTab] = useState<"secciones" | "widgets" | "negocio">("secciones");
@@ -129,12 +138,19 @@ export function BuilderClient({
     return config.widgets.some((w) => w.widgetId === slug);
   }
 
+  /** Montaje en línea y montaje con dominio son mutuamente excluyentes. */
+  const MONTAJE_SLUGS = ["montaje-sin-dominio", "montaje-con-dominio"] as const;
+
   function toggleWidget(w: CatalogWidget) {
     update((c) => {
       if (c.widgets.some((x) => x.widgetId === w.slug)) {
         c.widgets = c.widgets.filter((x) => x.widgetId !== w.slug);
         if (w.sectionType) c.sections = c.sections.filter((s) => s.type !== w.sectionType);
       } else {
+        // Solo un tipo de montaje a la vez
+        if ((MONTAJE_SLUGS as readonly string[]).includes(w.slug)) {
+          c.widgets = c.widgets.filter((x) => !(MONTAJE_SLUGS as readonly string[]).includes(x.widgetId));
+        }
         c.widgets.push({ widgetId: w.slug, config: {} });
         if (w.sectionType && !c.sections.some((s) => s.type === w.sectionType)) {
           const maxOrder = Math.max(0, ...c.sections.map((s) => s.order));
@@ -242,7 +258,26 @@ export function BuilderClient({
               🔒 Descargar .zip
             </Button>
           )}
-          <PayButton siteKey={siteKey} lineItems={invoice.lineItems} total={invoice.total} paidTotal={paidTotal} status={status} onPaid={() => setStatus("COMPLETED")} />
+          <PayButton
+            siteKey={siteKey}
+            lineItems={invoice.lineItems}
+            total={invoice.total}
+            paidTotal={paidTotal}
+            status={status}
+            prepareCheckout={async () => {
+              // Sincroniza config + factura en el servidor antes de crear la sesión de Stripe
+              const res = await fetch(`/api/sites/${siteKey}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ config }),
+              });
+              if (!res.ok) return false;
+              const j = await res.json().catch(() => ({}));
+              if (j.status) setStatus(j.status);
+              if (j.invoice?.paidTotal !== undefined) setPaidTotal(j.invoice.paidTotal);
+              return true;
+            }}
+          />
           <Button size="sm" onClick={save} disabled={saving}>
             {saving ? "Guardando…" : "Guardar"}
           </Button>
@@ -396,8 +431,8 @@ export function BuilderClient({
 }
 
 /**
- * Placeholder de pago: muestra el resumen y registra el pedido.
- * La pasarela real (Stripe) se conecta después en src/lib/payments.ts.
+ * Pago con Stripe Checkout: guarda el pedido, crea la sesión y redirige
+ * a la pasarela. Al regresar, el webhook marca PAID y desbloquea el .zip.
  */
 function PayButton({
   siteKey,
@@ -405,65 +440,83 @@ function PayButton({
   total,
   paidTotal,
   status,
-  onPaid,
+  prepareCheckout,
 }: {
   siteKey: string;
   lineItems: LineItem[];
   total: number;
   paidTotal: number;
   status: string;
-  onPaid: () => void;
+  /** Guarda config/factura en el servidor antes de abrir Stripe. */
+  prepareCheckout: () => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [requested, setRequested] = useState(false);
+  const [payError, setPayError] = useState("");
 
   const saldo = Math.max(0, total - paidTotal);
-  // El cliente puede confirmar: su primer pedido (DRAFT) o el pago del
-  // saldo cuando agregó módulos después de haber pagado.
-  const canConfirm = status === "DRAFT" || (status === "COMPLETED" && paidTotal > 0 && saldo > 0 && !requested);
+  const canPay =
+    saldo > 0 && (status === "DRAFT" || status === "COMPLETED" || (status === "PAID" && paidTotal > 0 && total > paidTotal));
 
-  async function confirm() {
+  async function goToStripe() {
     setLoading(true);
-    // Con Stripe configurado: redirección a la página de pago
-    const checkout = await fetch(`/api/sites/${siteKey}/checkout`, { method: "POST" });
-    if (checkout.ok) {
-      const { url } = await checkout.json();
-      window.location.href = url;
-      return;
+    setPayError("");
+    try {
+      const prepared = await prepareCheckout();
+      if (!prepared) {
+        setPayError("No se pudo guardar tu pedido. Intenta de nuevo.");
+        setLoading(false);
+        return;
+      }
+      const checkout = await fetch(`/api/sites/${siteKey}/checkout`, { method: "POST" });
+      const data = await checkout.json().catch(() => ({}));
+      if (checkout.ok && data.url) {
+        window.location.href = data.url;
+        return;
+      }
+      if (checkout.status === 503) {
+        setPayError(
+          "Los pagos en línea no están configurados todavía (falta la clave de Stripe en el servidor). Contacta al administrador."
+        );
+      } else if (checkout.status === 400) {
+        setPayError(data.error || "No hay monto pendiente por pagar.");
+      } else {
+        setPayError(data.error || "No se pudo abrir la pasarela de pago. Intenta de nuevo en un momento.");
+      }
+    } catch {
+      setPayError("Error de conexión. Revisa tu internet e intenta de nuevo.");
     }
-    // Fallback (Stripe no disponible): registrar la solicitud para cobro manual
-    await fetch(`/api/sites/${siteKey}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "complete" }),
-    });
     setLoading(false);
-    setRequested(true);
-    setOpen(false);
-    onPaid();
   }
 
   return (
     <>
       <button
-        onClick={() => setOpen(true)}
+        type="button"
+        onClick={() => {
+          setPayError("");
+          setOpen(true);
+        }}
         className="h-8 rounded-lg bg-emerald-600 px-3 text-sm font-medium text-white hover:bg-emerald-500 transition-colors"
       >
-        {status === "DRAFT" ? "Pagar" : status !== "PAID" && paidTotal > 0 && saldo > 0 ? `Pagar saldo` : "Ver mi pedido"}
+        {status === "PAID" && saldo <= 0
+          ? "Ver mi pedido"
+          : saldo > 0 && paidTotal > 0
+            ? "Pagar saldo"
+            : "Pagar"}
       </button>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => !loading && setOpen(false)}>
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold text-slate-900">Resumen de tu pedido</h3>
             <ul className="mt-4 space-y-2 text-sm">
               {lineItems.map((item, i) => (
-                <li key={i} className="flex justify-between">
+                <li key={i} className="flex justify-between gap-2">
                   <span className="text-slate-600">
                     {item.label}
                     {item.qty > 1 ? ` ×${item.qty}` : ""}
                   </span>
-                  <span className="font-medium">{formatMoney(item.subtotal)}</span>
+                  <span className="shrink-0 font-medium">{formatMoney(item.subtotal)}</span>
                 </li>
               ))}
             </ul>
@@ -479,22 +532,27 @@ function PayButton({
                 </div>
                 <div className="mt-1 flex justify-between font-semibold text-brand-navy">
                   <span>Saldo pendiente</span>
-                  <span>{formatMoney(total - paidTotal)}</span>
+                  <span>{formatMoney(saldo)}</span>
                 </div>
               </div>
             )}
-            {canConfirm ? (
+
+            {canPay ? (
               <>
-                <p className="mt-4 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
-                  🚧 La pasarela de pago (Stripe/PayPal) se integrará próximamente. Al confirmar, tu solicitud queda
-                  registrada y nos pondremos en contacto para el cobro. Puedes seguir editando tu sitio.
+                <p className="mt-4 rounded-lg bg-emerald-50 p-3 text-xs text-emerald-800">
+                  Al continuar serás redirigido a la <b>pasarela de pago segura (Stripe)</b> para pagar{" "}
+                  <b>{formatMoney(saldo)}</b> con tarjeta u otros métodos habilitados. Al terminar el pago podrás
+                  descargar el .zip de tu sitio.
                 </p>
+                {payError && (
+                  <p className="mt-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{payError}</p>
+                )}
                 <div className="mt-4 flex gap-2">
-                  <Button variant="outline" className="flex-1" onClick={() => setOpen(false)}>
+                  <Button variant="outline" className="flex-1" onClick={() => setOpen(false)} disabled={loading}>
                     Cancelar
                   </Button>
-                  <Button className="flex-1" onClick={confirm} disabled={loading}>
-                    {loading ? "Confirmando…" : status === "DRAFT" ? "Confirmar pedido" : `Pagar saldo (${formatMoney(saldo)})`}
+                  <Button className="flex-1" onClick={goToStripe} disabled={loading}>
+                    {loading ? "Abriendo pago…" : `Ir a pagar ${formatMoney(saldo)}`}
                   </Button>
                 </div>
               </>
@@ -503,9 +561,7 @@ function PayButton({
                 <p className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">
                   {status === "PAID"
                     ? "✅ Tu pedido está pagado. Si agregas módulos nuevos, aquí aparecerá el saldo a cubrir."
-                    : requested && saldo > 0
-                      ? "✅ Registramos tu solicitud de pago del saldo. Nos pondremos en contacto para el cobro."
-                      : "✅ Tu pedido ya está registrado. Si sigues editando y cambia el total, el nuevo monto queda reflejado aquí."}
+                    : "✅ No hay saldo pendiente por pagar."}
                 </p>
                 <Button variant="outline" className="mt-3 w-full" onClick={() => setOpen(false)}>
                   Cerrar
@@ -600,6 +656,9 @@ function WidgetConfig({
   if (widget.slug === "montaje-con-dominio") {
     return (
       <div className="mt-3 space-y-2 border-t border-brand-teal/30 pt-3">
+        <p className="rounded-lg bg-slate-50 p-2 text-[11px] text-slate-500">
+          Solo puedes elegir <b>un</b> tipo de montaje. Si activas este, se desactiva el montaje sin dominio.
+        </p>
         <Label>¿Qué dominio te gustaría?</Label>
         <Input
           placeholder="minegocio.com"
@@ -615,6 +674,9 @@ function WidgetConfig({
   if (widget.slug === "montaje-sin-dominio") {
     return (
       <div className="mt-3 space-y-2 border-t border-brand-teal/30 pt-3">
+        <p className="rounded-lg bg-slate-50 p-2 text-[11px] text-slate-500">
+          Solo puedes elegir <b>un</b> tipo de montaje. Si activas este, se desactiva el montaje con dominio propio.
+        </p>
         <Label>Nombre para tu dirección web</Label>
         <div className="flex items-center gap-1">
           <Input
