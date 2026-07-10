@@ -34,6 +34,15 @@ async function store(name: string, buffer: Buffer, contentType: string): Promise
  * a partir de la imagen (para el logo).
  */
 export async function POST(req: Request) {
+  // En Vercel el disco es efímero: sin Blob store las imágenes se perderían.
+  // Mejor fallar con un mensaje claro que guardar en un disco que se borra.
+  if (process.env.VERCEL && !useBlob()) {
+    return NextResponse.json(
+      { error: "Almacenamiento no configurado: crea el Blob store en Vercel (Storage → Create → Blob) y redeploy." },
+      { status: 503 }
+    );
+  }
+
   const form = await req.formData();
   const file = form.get("file");
   if (!(file instanceof File)) {
@@ -42,8 +51,9 @@ export async function POST(req: Request) {
   if (!ALLOWED.has(file.type)) {
     return NextResponse.json({ error: "Formato no soportado (usa PNG, JPG, WebP o SVG)." }, { status: 400 });
   }
-  if (file.size > 8 * 1024 * 1024) {
-    return NextResponse.json({ error: "Máximo 8 MB." }, { status: 400 });
+  // Límite de 4 MB: el body de una función de Vercel admite 4.5 MB máximo
+  if (file.size > 4 * 1024 * 1024) {
+    return NextResponse.json({ error: "Máximo 4 MB. Comprime la imagen o usa la opción de URL externa." }, { status: 400 });
   }
 
   const id = crypto.randomBytes(8).toString("hex");

@@ -85,7 +85,8 @@ const templates = [
 ];
 
 const widgets = [
-  { slug: "galeria", name: "Galería de fotos", description: "Grid de imágenes con lightbox y animación al hacer scroll.", sectionType: "gallery", icon: "image", price: 250 },
+  { slug: "galeria", name: "Galería de fotos", description: "Cuadrícula de fotos configurable (tamaño, efectos, espaciados, textos).", sectionType: "gallery", icon: "image", price: 250 },
+  { slug: "carrusel", name: "Carrusel de imágenes", description: "Carrusel de fotos que avanza automáticamente, con textos y controles.", sectionType: "carousel", icon: "images", price: 300 },
   { slug: "testimonios", name: "Testimonios / reseñas", description: "Carrusel de reseñas de clientes con foto y nombre.", sectionType: "testimonials", icon: "quote", price: 200 },
   { slug: "mapa", name: "Integración de mapa", description: "Mapa embebido de Google Maps con tu ubicación.", sectionType: "map", icon: "map-pin", price: 150 },
   { slug: "faq", name: "Preguntas frecuentes", description: "Acordeón de preguntas y respuestas.", sectionType: "faq", icon: "help-circle", price: 150 },
@@ -123,7 +124,7 @@ async function main() {
     },
   });
 
-  console.log("Seed listo: 3 templates, 9 widgets, super admin rodney@berriesandmango.com (password: superadmin123)");
+  console.log("Seed listo: 3 templates y todos los widgets, super admin rodney@berriesandmango.com (password: superadmin123)");
 }
 
 main().finally(() => prisma.$disconnect());

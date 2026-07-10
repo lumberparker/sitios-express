@@ -5,10 +5,10 @@
 // El exportador estático (src/lib/export/static.ts) produce el mismo diseño
 // en HTML/CSS puro.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import type { SiteConfig, Section, TemplateConfig } from "@/lib/site-config";
-import { SECTION_LABELS } from "@/lib/site-config";
+import { SECTION_LABELS, effectiveFonts } from "@/lib/site-config";
 
 const ROUNDED: Record<string, string> = { none: "0", md: "10px", xl: "20px", full: "32px" };
 
@@ -57,7 +57,9 @@ function cardStyle(section: Section, tpl: TemplateConfig): React.CSSProperties {
   };
 }
 
-export function SiteRenderer({ config, templateConfig: tpl }: { config: SiteConfig; templateConfig: TemplateConfig }) {
+export function SiteRenderer({ config, templateConfig: tplBase }: { config: SiteConfig; templateConfig: TemplateConfig }) {
+  // Tipografía: overrides del usuario (config.theme) sobre la del template
+  const tpl: TemplateConfig = { ...tplBase, fonts: effectiveFonts(config, tplBase) };
   const [menuOpen, setMenuOpen] = useState(false);
   const sections = [...config.sections].sort((a, b) => a.order - b.order);
   const menuSections = sections.filter((s) => s.inMenu);
@@ -82,10 +84,11 @@ export function SiteRenderer({ config, templateConfig: tpl }: { config: SiteConf
       >
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
-            {config.business.logoUrl ? (
+            {config.business.logoUrl && (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={config.business.logoUrl} alt={config.business.name} className="h-10 w-auto object-contain" />
-            ) : (
+            )}
+            {(config.business.showNameInHeader !== false || !config.business.logoUrl) && (
               <span className="text-lg font-bold" style={{ fontFamily: `'${tpl.fonts.heading}', serif`, color: tpl.palette.primary }}>
                 {config.business.name}
               </span>
@@ -304,6 +307,9 @@ function SectionBody({
     case "gallery":
       return <GallerySection section={section} heading={heading} />;
 
+    case "carousel":
+      return <CarouselSection section={section} heading={heading} />;
+
     case "map":
       return (
         <div className="mx-auto max-w-5xl px-6 py-24 text-center">
@@ -398,17 +404,18 @@ function GallerySection({ section, heading }: { section: Section; heading: React
   const gapY = Number(c.gapY ?? 12);
   const borderWidth = Number(c.borderWidth ?? 0);
   const borderColor = c.borderColor || "#ffffff";
+  const radius = Number(c.radius ?? 16);
   const effect = c.hoverEffect ?? "zoom";
   const capMode = c.captionMode ?? "hover";
   const id = section.id;
 
   // Reglas dinámicas (hover/caption) con alcance por sección
   const css = [
-    `#${id} .g-item{position:relative;overflow:hidden;border-radius:16px}`,
-    `#${id} .g-item img{aspect-ratio:1;width:100%;object-fit:cover;display:block;border-radius:16px;transition:transform .35s ease,filter .35s ease;${
+    `#${id} .g-item{position:relative;overflow:hidden;border-radius:${radius}px}`,
+    `#${id} .g-item img{aspect-ratio:1;width:100%;object-fit:cover;display:block;border-radius:${radius}px;transition:transform .35s ease,filter .35s ease;${
       borderWidth ? `border:${borderWidth}px solid ${borderColor};` : ""
     }}`,
-    `#${id} .g-cap{position:absolute;left:0;right:0;bottom:0;padding:.9rem;color:#fff;font-size:.85rem;background:linear-gradient(transparent,rgba(0,0,0,.75));border-radius:0 0 16px 16px;transition:opacity .3s}`,
+    `#${id} .g-cap{position:absolute;left:0;right:0;bottom:0;padding:.9rem;color:#fff;font-size:.85rem;background:linear-gradient(transparent,rgba(0,0,0,.75));border-radius:0 0 ${radius}px ${radius}px;transition:opacity .3s}`,
     capMode === "hover" ? `#${id} .g-cap{opacity:0} #${id} .g-item:hover .g-cap{opacity:1}` : "",
     capMode === "none" ? `#${id} .g-cap{display:none}` : "",
     effect === "zoom" ? `#${id} .g-item:hover img{transform:scale(1.07)}` : "",
@@ -444,6 +451,92 @@ function GallerySection({ section, heading }: { section: Section; heading: React
       ) : (
         <p className="mt-12 text-center text-sm opacity-50">Agrega fotos desde el builder.</p>
       )}
+    </div>
+  );
+}
+
+function CarouselSection({ section, heading }: { section: Section; heading: React.CSSProperties }) {
+  const c = section.content;
+  const images = normalizeGalleryImages(c.images).slice(0, 15);
+  const interval = Math.min(10, Math.max(2, Number(c.interval) || 4)) * 1000;
+  const height = Math.min(640, Math.max(200, Number(c.height) || 400));
+  const radius = Number(c.radius ?? 16);
+  const [idx, setIdx] = useState(0);
+
+  useEffect(() => {
+    if (images.length < 2) return;
+    const t = setInterval(() => setIdx((i) => (i + 1) % images.length), interval);
+    return () => clearInterval(t);
+  }, [images.length, interval]);
+
+  if (images.length === 0) {
+    return (
+      <div className="mx-auto max-w-5xl px-6 py-24 text-center text-sm opacity-50">Agrega fotos al carrusel desde el builder.</div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-5xl px-6 py-24">
+      {c.title && (
+        <Reveal>
+          <h2 className="mb-10 text-center text-3xl font-bold md:text-4xl" style={heading}>
+            {c.title}
+          </h2>
+        </Reveal>
+      )}
+      <Reveal>
+        <div className="relative overflow-hidden" style={{ borderRadius: radius }}>
+          <div
+            className="flex transition-transform duration-700 ease-in-out"
+            style={{ transform: `translateX(-${idx * 100}%)` }}
+          >
+            {images.map((img, i) => (
+              <div key={i} className="relative w-full shrink-0" style={{ height }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={img.url} alt={img.caption || ""} className="h-full w-full object-cover" />
+                {img.caption && (
+                  <p className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent p-5 text-sm text-white">
+                    {img.caption}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+          {/* Flechas */}
+          {images.length > 1 && (
+            <>
+              <button
+                aria-label="Anterior"
+                onClick={() => setIdx((i) => (i - 1 + images.length) % images.length)}
+                className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-black/40 px-3 py-1.5 text-white transition-colors hover:bg-black/60"
+              >
+                ‹
+              </button>
+              <button
+                aria-label="Siguiente"
+                onClick={() => setIdx((i) => (i + 1) % images.length)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-black/40 px-3 py-1.5 text-white transition-colors hover:bg-black/60"
+              >
+                ›
+              </button>
+            </>
+          )}
+          {/* Puntos */}
+          {images.length > 1 && (
+            <div className="absolute inset-x-0 bottom-2 flex justify-center gap-1.5">
+              {images.map((_, i) => (
+                <button
+                  key={i}
+                  aria-label={`Foto ${i + 1}`}
+                  onClick={() => setIdx(i)}
+                  className="h-2 w-2 rounded-full transition-all"
+                  style={{ background: i === idx ? "#fff" : "rgba(255,255,255,.45)", width: i === idx ? 16 : 8 }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </Reveal>
     </div>
   );
 }

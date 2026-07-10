@@ -33,6 +33,7 @@ export const SectionTypeSchema = z.enum([
   "products",
   "testimonials",
   "gallery",
+  "carousel",
   "map",
   "faq",
   "contact",
@@ -58,6 +59,9 @@ export const SiteConfigSchema = z.object({
   templateId: z.string(),
   business: z.object({
     name: z.string().min(1),
+    // Mostrar el nombre junto al logo en el header (si no hay logo, el
+    // nombre se muestra siempre)
+    showNameInHeader: z.boolean().default(true),
     tagline: z.string().default(""),
     logoUrl: z.string().default(""),
     faviconUrl: z.string().default(""),
@@ -76,6 +80,15 @@ export const SiteConfigSchema = z.object({
     tiktok: z.string().default(""),
     x: z.string().default(""),
   }),
+  // Tipografía elegida por el usuario (vacío = usar la del template).
+  // fontEmbedUrl permite pegar la URL del embed de Google Fonts.
+  theme: z
+    .object({
+      fontHeading: z.string().default(""),
+      fontBody: z.string().default(""),
+      fontEmbedUrl: z.string().default(""),
+    })
+    .default({ fontHeading: "", fontBody: "", fontEmbedUrl: "" }),
   sections: z.array(SectionSchema),
   // Widgets con precio agregados al sitio (facturan). Los widgets con
   // sectionType además insertan/activan su sección correspondiente.
@@ -120,11 +133,24 @@ export const SECTION_LABELS: Record<SectionType, string> = {
   products: "Productos / Servicios",
   testimonials: "Testimonios",
   gallery: "Galería",
+  carousel: "Carrusel de imágenes",
   map: "Mapa / Ubicación",
   faq: "Preguntas frecuentes",
   contact: "Formulario de contacto",
   quote: "Calculadora de cotización",
 };
+
+/** Tipografía efectiva: overrides del usuario o la del template. */
+export function effectiveFonts(config: SiteConfig, tpl: TemplateConfig): TemplateConfig["fonts"] {
+  const t = config.theme ?? { fontHeading: "", fontBody: "", fontEmbedUrl: "" };
+  if (!t.fontHeading.trim() && !t.fontBody.trim() && !t.fontEmbedUrl.trim()) return tpl.fonts;
+  const heading = t.fontHeading.trim() || tpl.fonts.heading;
+  const body = t.fontBody.trim() || tpl.fonts.body;
+  const googleUrl =
+    t.fontEmbedUrl.trim() ||
+    `https://fonts.googleapis.com/css2?family=${heading.replace(/ /g, "+")}:wght@400;700&family=${body.replace(/ /g, "+")}:wght@400;500;600&display=swap`;
+  return { heading, body, googleUrl };
+}
 
 export function defaultSectionContent(type: SectionType, businessName = ""): Record<string, any> {
   switch (type) {
@@ -168,9 +194,13 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
         gapY: 12,
         borderWidth: 0,
         borderColor: "#ffffff",
+        radius: 16,
         hoverEffect: "zoom", // none | zoom | lift | gray | dark
         captionMode: "hover", // none | hover | always
       };
+    case "carousel":
+      // Carrusel automático: images [{ url, caption }], interval en segundos
+      return { title: "", images: [], interval: 4, height: 400, radius: 16 };
     case "map":
       return { title: "Encuéntranos", address: "", embedUrl: "" };
     case "faq":

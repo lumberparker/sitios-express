@@ -120,6 +120,20 @@ export function BuilderClient({
     });
   }
 
+  /** Agrega una sección: gratis si es base (hero/about/products), con cargo si viene de un widget. */
+  function addSection(type: SectionType) {
+    const w = catalog.find((x) => x.sectionType === type);
+    if (w && !hasWidget(w.slug)) {
+      toggleWidget(w); // agrega la sección y su cargo en la factura
+      return;
+    }
+    update((c) => {
+      const maxOrder = Math.max(0, ...c.sections.map((s) => s.order));
+      c.sections.push(makeSection(type, maxOrder + 1, c.business.name));
+      return c;
+    });
+  }
+
   /** Página adicional: no es toggle — la cantidad es el número de páginas definidas. */
   function setExtraPages(pages: ExtraPage[]) {
     update((c) => {
@@ -236,9 +250,7 @@ export function BuilderClient({
                     onRemove={() => removeSection(section.id)}
                   />
                 ))}
-                <p className="pt-2 text-xs text-slate-400">
-                  Para agregar secciones nuevas (galería, FAQ, mapa…) usa la pestaña <b>Widgets</b>: cada una muestra su precio.
-                </p>
+                <AddSectionControl sections={config.sections} catalog={catalog} onAdd={addSection} />
               </div>
             )}
 
@@ -415,6 +427,60 @@ function PayButton({
   );
 }
 
+/** Re-agregar secciones borradas o sumar nuevas desde la lista de secciones. */
+function AddSectionControl({
+  sections,
+  catalog,
+  onAdd,
+}: {
+  sections: Section[];
+  catalog: { slug: string; sectionType: string | null; price: number }[];
+  onAdd: (type: SectionType) => void;
+}) {
+  const [selected, setSelected] = useState("");
+  const present = new Set(sections.map((s) => s.type));
+  const available = (Object.keys(SECTION_LABELS) as SectionType[]).filter((t) => !present.has(t));
+  if (available.length === 0) return null;
+
+  const priceLabel = (t: SectionType) => {
+    const w = catalog.find((x) => x.sectionType === t);
+    return w ? `+${formatMoney(w.price)}` : "incluida";
+  };
+
+  return (
+    <div className="rounded-xl border border-dashed border-slate-300 p-3">
+      <Label>Agregar sección</Label>
+      <div className="flex gap-1">
+        <select
+          value={selected}
+          onChange={(e) => setSelected(e.target.value)}
+          className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+        >
+          <option value="">Elige una sección…</option>
+          {available.map((t) => (
+            <option key={t} value={t}>
+              {SECTION_LABELS[t]} ({priceLabel(t)})
+            </option>
+          ))}
+        </select>
+        <Button
+          size="sm"
+          disabled={!selected}
+          onClick={() => {
+            onAdd(selected as SectionType);
+            setSelected("");
+          }}
+        >
+          Agregar
+        </Button>
+      </div>
+      <p className="mt-1.5 text-xs text-slate-400">
+        Las secciones borradas se pueden volver a agregar aquí. Las que vienen de un widget suman su precio a la factura.
+      </p>
+    </div>
+  );
+}
+
 // --- Configuración de widgets ------------------------------------------------
 
 export type ExtraPage = { title: string; content: string };
@@ -554,6 +620,16 @@ function BusinessEditor({ config, update }: { config: SiteConfig; update: (fn: (
       <div>
         <Label>Nombre del negocio</Label>
         <Input value={b.name} onChange={setB("name")} />
+        <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
+          <input
+            type="checkbox"
+            checked={b.showNameInHeader !== false}
+            onChange={(e) => update((c) => ((c.business.showNameInHeader = e.target.checked), c))}
+            disabled={!b.logoUrl}
+          />
+          Mostrar el nombre junto al logo en el header
+          {!b.logoUrl && <span className="text-slate-400">(sin logo, el nombre siempre se muestra)</span>}
+        </label>
       </div>
       <div>
         <Label>Correo</Label>
@@ -583,6 +659,95 @@ function BusinessEditor({ config, update }: { config: SiteConfig; update: (fn: (
           </div>
         ))}
       </div>
+      <FontsEditor config={config} update={update} />
+    </div>
+  );
+}
+
+const FONT_PRESETS: { label: string; heading: string; body: string }[] = [
+  { label: "Ochentera — Righteous + Work Sans", heading: "Righteous", body: "Work Sans" },
+  { label: "Elegante — Playfair Display + Source Sans 3", heading: "Playfair Display", body: "Source Sans 3" },
+  { label: "Moderna — Space Grotesk + Inter", heading: "Space Grotesk", body: "Inter" },
+  { label: "Cálida — Fraunces + Karla", heading: "Fraunces", body: "Karla" },
+  { label: "Editorial — Libre Baskerville + Open Sans", heading: "Libre Baskerville", body: "Open Sans" },
+  { label: "Divertida — Baloo 2 + Nunito", heading: "Baloo 2", body: "Nunito" },
+];
+
+/** Tipografía del sitio: preset curado o embed de Google Fonts pegado por el usuario. */
+function FontsEditor({ config, update }: { config: SiteConfig; update: (fn: (c: SiteConfig) => SiteConfig) => void }) {
+  const theme = config.theme ?? { fontHeading: "", fontBody: "", fontEmbedUrl: "" };
+  const [custom, setCustom] = useState(Boolean(theme.fontEmbedUrl));
+  const [embedDraft, setEmbedDraft] = useState(theme.fontEmbedUrl);
+
+  const setTheme = (patch: Partial<typeof theme>) =>
+    update((c) => ((c.theme = { ...(c.theme ?? { fontHeading: "", fontBody: "", fontEmbedUrl: "" }), ...patch }), c));
+
+  const presetValue =
+    !theme.fontEmbedUrl && theme.fontHeading
+      ? FONT_PRESETS.findIndex((p) => p.heading === theme.fontHeading && p.body === theme.fontBody)
+      : -1;
+
+  function applyEmbed() {
+    // Acepta el <link> completo de Google Fonts o solo la URL
+    const match = embedDraft.match(/href="([^"]+)"/) ?? embedDraft.match(/(https:\/\/fonts\.googleapis\.com\/css2[^\s"'<>]+)/);
+    const url = match?.[1] ?? match?.[0] ?? "";
+    if (!url.startsWith("https://fonts.googleapis.com/")) {
+      alert("Pega el código embed (o la URL) de Google Fonts — debe apuntar a fonts.googleapis.com");
+      return;
+    }
+    setTheme({ fontEmbedUrl: url });
+  }
+
+  return (
+    <div className="rounded-xl bg-slate-50 p-3">
+      <p className="mb-2 text-xs font-semibold text-slate-500">Tipografía del sitio</p>
+      {!custom ? (
+        <>
+          <select
+            value={presetValue}
+            onChange={(e) => {
+              const i = Number(e.target.value);
+              if (i < 0) setTheme({ fontHeading: "", fontBody: "", fontEmbedUrl: "" });
+              else setTheme({ fontHeading: FONT_PRESETS[i].heading, fontBody: FONT_PRESETS[i].body, fontEmbedUrl: "" });
+            }}
+            className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+          >
+            <option value={-1}>La del template (recomendada)</option>
+            {FONT_PRESETS.map((p, i) => (
+              <option key={i} value={i}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+          <button type="button" onClick={() => setCustom(true)} className="mt-2 text-xs text-brand-blue hover:underline">
+            Usar otra fuente de Google Fonts →
+          </button>
+        </>
+      ) : (
+        <div className="space-y-2">
+          <Label className="text-xs">Pega el código embed de Google Fonts (el &lt;link&gt;)</Label>
+          <Textarea rows={3} value={embedDraft} onChange={(e) => setEmbedDraft(e.target.value)} placeholder={'<link href="https://fonts.googleapis.com/css2?family=..." rel="stylesheet">'} className="font-mono text-xs" />
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Fuente de títulos</Label>
+              <Input value={theme.fontHeading} onChange={(e) => setTheme({ fontHeading: e.target.value })} placeholder="Ej. Lobster" />
+            </div>
+            <div>
+              <Label className="text-xs">Fuente de texto</Label>
+              <Input value={theme.fontBody} onChange={(e) => setTheme({ fontBody: e.target.value })} placeholder="Ej. Lato" />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" onClick={applyEmbed}>Aplicar</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setCustom(false); setTheme({ fontHeading: "", fontBody: "", fontEmbedUrl: "" }); }}>
+              Volver a presets
+            </Button>
+          </div>
+          <p className="text-[11px] text-slate-400">
+            En fonts.google.com elige tu fuente → "Get embed code" → copia el bloque &lt;link&gt; y escribe los nombres tal cual aparecen.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -671,6 +836,7 @@ function SectionEditor({
             <ItemsEditor section={section} onChange={onChange} />
           )}
           {section.type === "gallery" && <GalleryEditor section={section} onChange={onChange} />}
+          {section.type === "carousel" && <CarouselEditor section={section} onChange={onChange} />}
 
           {/* Estilo */}
           <div className="rounded-lg bg-slate-50 p-3">
@@ -866,6 +1032,11 @@ function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn:
       </div>
 
       <div>
+        <Label>Esquinas redondeadas ({Number(c.radius ?? 16)}px)</Label>
+        <input type="range" min={0} max={40} value={Number(c.radius ?? 16)} onChange={(e) => set("radius", Number(e.target.value))} className="w-full" />
+      </div>
+
+      <div>
         <Label>Texto sobre la imagen</Label>
         <select
           value={c.captionMode ?? "hover"}
@@ -920,9 +1091,14 @@ function LogoField({
   faviconUrl: string;
   onUploaded: (logoUrl: string, faviconUrl?: string) => void;
 }) {
+  const [mode, setMode] = useState<"upload" | "url">("upload");
+  const [urlDraft, setUrlDraft] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+
   async function upload(file: File) {
     setUploading(true);
+    setError("");
     const fd = new FormData();
     fd.append("file", file);
     const res = await fetch("/api/upload?favicon=1", { method: "POST", body: fd });
@@ -930,18 +1106,58 @@ function LogoField({
     if (res.ok) {
       const json = await res.json();
       onUploaded(json.url, json.faviconUrl);
+    } else {
+      const j = await res.json().catch(() => ({}));
+      setError(j.error ?? "No se pudo subir el logo.");
     }
   }
+
+  function applyUrl() {
+    const u = urlDraft.trim();
+    if (!/^https?:\/\/.+/.test(u)) {
+      setError("Pega una URL válida (http:// o https://).");
+      return;
+    }
+    setError("");
+    onUploaded(u);
+    setUrlDraft("");
+  }
+
   return (
     <div className="rounded-xl bg-slate-50 p-3">
-      <Label>Logo del negocio {uploading && <span className="text-brand-blue">(subiendo…)</span>}</Label>
-      <input
-        type="file"
-        accept="image/png,image/jpeg,image/webp,image/svg+xml"
-        onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
-        className="block w-full text-xs text-slate-500 file:mr-3 file:rounded file:border-0 file:bg-brand-teal/20 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-brand-navy"
-      />
-      <p className="mt-1 text-xs text-slate-400">Al subir el logo, el favicon (ícono de la pestaña) se genera solo.</p>
+      <div className="flex items-center justify-between">
+        <Label className="mb-0">Logo del negocio {uploading && <span className="text-brand-blue">(subiendo…)</span>}</Label>
+        <div className="flex gap-1 text-xs">
+          <button type="button" onClick={() => setMode("upload")} className={`rounded px-1.5 py-0.5 ${mode === "upload" ? "bg-brand-navy text-white" : "text-slate-500 hover:bg-slate-100"}`}>
+            Subir
+          </button>
+          <button type="button" onClick={() => setMode("url")} className={`rounded px-1.5 py-0.5 ${mode === "url" ? "bg-brand-navy text-white" : "text-slate-500 hover:bg-slate-100"}`}>
+            URL
+          </button>
+        </div>
+      </div>
+      {mode === "upload" ? (
+        <>
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml"
+            onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
+            className="mt-1.5 block w-full text-xs text-slate-500 file:mr-3 file:rounded file:border-0 file:bg-brand-teal/20 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-brand-navy"
+          />
+          <p className="mt-1 text-xs text-slate-400">Al subir el logo, el favicon (ícono de la pestaña) se genera solo.</p>
+        </>
+      ) : (
+        <div className="mt-1.5">
+          <div className="flex gap-1">
+            <Input placeholder="https://misitio.com/logo.png" value={urlDraft} onChange={(e) => setUrlDraft(e.target.value)} className="h-8 text-xs" />
+            <Button size="sm" variant="secondary" onClick={applyUrl}>Usar</Button>
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">
+            Si hospedas tu propio logo, pega su enlace directo. Ojo: con URL externa el favicon no se genera automático (súbelo como archivo si lo quieres).
+          </p>
+        </div>
+      )}
+      {error && <p className="mt-1 text-xs text-rose-600">{error}</p>}
       {(logoUrl || faviconUrl) && (
         <div className="mt-2 flex items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -958,25 +1174,128 @@ function LogoField({
   );
 }
 
+function CarouselEditor({ section, onChange }: { section: Section; onChange: (fn: (s: Section) => void) => void }) {
+  const c = section.content;
+  const images: { url: string; caption?: string }[] = ((c.images as any[]) ?? [])
+    .map((i) => (typeof i === "string" ? { url: i } : i))
+    .filter((i) => i?.url);
+  const set = (k: string, v: any) => onChange((s) => (s.content[k] = v));
+  const setImages = (imgs: { url: string; caption?: string }[]) => set("images", imgs);
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <Label>Avance automático ({Number(c.interval ?? 4)}s)</Label>
+          <input type="range" min={2} max={10} value={Number(c.interval ?? 4)} onChange={(e) => set("interval", Number(e.target.value))} className="w-full" />
+        </div>
+        <div>
+          <Label>Altura ({Number(c.height ?? 400)}px)</Label>
+          <input type="range" min={240} max={560} step={20} value={Number(c.height ?? 400)} onChange={(e) => set("height", Number(e.target.value))} className="w-full" />
+        </div>
+      </div>
+      <div>
+        <Label>Esquinas redondeadas ({Number(c.radius ?? 16)}px)</Label>
+        <input type="range" min={0} max={40} value={Number(c.radius ?? 16)} onChange={(e) => set("radius", Number(e.target.value))} className="w-full" />
+      </div>
+      <div>
+        <Label>Fotos ({images.length} de 15)</Label>
+        {images.length < 15 && (
+          <ImageField label="Agregar foto" value="" onUploaded={(url) => setImages([...images, { url, caption: "" }])} />
+        )}
+        <div className="mt-2 space-y-2">
+          {images.map((img, i) => (
+            <div key={i} className="flex items-center gap-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={img.url} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
+              <Input
+                placeholder="Texto de esta foto (opcional)"
+                value={img.caption ?? ""}
+                onChange={(e) => setImages(images.map((x, j) => (j === i ? { ...x, caption: e.target.value } : x)))}
+              />
+              <div className="flex shrink-0 flex-col text-xs text-slate-400">
+                <button onClick={() => i > 0 && setImages(images.map((x, j) => (j === i - 1 ? images[i] : j === i ? images[i - 1] : x)))} disabled={i === 0} className="hover:text-slate-700 disabled:opacity-30">↑</button>
+                <button onClick={() => i < images.length - 1 && setImages(images.map((x, j) => (j === i + 1 ? images[i] : j === i ? images[i + 1] : x)))} disabled={i === images.length - 1} className="hover:text-slate-700 disabled:opacity-30">↓</button>
+              </div>
+              <button onClick={() => setImages(images.filter((_, j) => j !== i))} className="shrink-0 text-xs text-rose-500 hover:underline">
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Campo de imagen con dos modos: subir archivo o pegar una URL externa
+ * (para quien prefiere hospedar sus propias fotos).
+ */
 function ImageField({ label, value, onUploaded }: { label: string; value: string; onUploaded: (url: string) => void }) {
+  const [mode, setMode] = useState<"upload" | "url">("upload");
+  const [urlDraft, setUrlDraft] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+
   async function upload(file: File) {
     setUploading(true);
+    setError("");
     const fd = new FormData();
     fd.append("file", file);
     const res = await fetch("/api/upload", { method: "POST", body: fd });
     setUploading(false);
-    if (res.ok) onUploaded((await res.json()).url);
+    if (res.ok) {
+      onUploaded((await res.json()).url);
+    } else {
+      const j = await res.json().catch(() => ({}));
+      setError(j.error ?? "No se pudo subir la imagen.");
+    }
   }
+
+  function applyUrl() {
+    const u = urlDraft.trim();
+    if (!/^https?:\/\/.+/.test(u)) {
+      setError("Pega una URL válida (debe empezar con http:// o https://).");
+      return;
+    }
+    setError("");
+    onUploaded(u);
+    setUrlDraft("");
+  }
+
   return (
     <div>
-      <Label>{label} {uploading && <span className="text-brand-blue">(subiendo…)</span>}</Label>
-      <input
-        type="file"
-        accept="image/png,image/jpeg,image/webp"
-        onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
-        className="block w-full text-xs text-slate-500 file:mr-3 file:rounded file:border-0 file:bg-brand-teal/15 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-brand-navy"
-      />
+      <div className="flex items-center justify-between">
+        <Label className="mb-0">{label} {uploading && <span className="text-brand-blue">(subiendo…)</span>}</Label>
+        <div className="flex gap-1 text-xs">
+          <button type="button" onClick={() => setMode("upload")} className={`rounded px-1.5 py-0.5 ${mode === "upload" ? "bg-brand-navy text-white" : "text-slate-500 hover:bg-slate-100"}`}>
+            Subir
+          </button>
+          <button type="button" onClick={() => setMode("url")} className={`rounded px-1.5 py-0.5 ${mode === "url" ? "bg-brand-navy text-white" : "text-slate-500 hover:bg-slate-100"}`}>
+            URL
+          </button>
+        </div>
+      </div>
+      {mode === "upload" ? (
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
+          className="mt-1.5 block w-full text-xs text-slate-500 file:mr-3 file:rounded file:border-0 file:bg-brand-teal/15 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-brand-navy"
+        />
+      ) : (
+        <div className="mt-1.5">
+          <div className="flex gap-1">
+            <Input placeholder="https://misitio.com/foto.jpg" value={urlDraft} onChange={(e) => setUrlDraft(e.target.value)} className="h-8 text-xs" />
+            <Button size="sm" variant="secondary" onClick={applyUrl}>Usar</Button>
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">
+            ¿Ya tienes tus fotos en internet (tu hosting, Imgur, Cloudinary…)? Pega aquí su enlace directo.
+          </p>
+        </div>
+      )}
+      {error && <p className="mt-1 text-xs text-rose-600">{error}</p>}
       {value && (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={value} alt="" className="mt-2 h-16 rounded object-cover" />

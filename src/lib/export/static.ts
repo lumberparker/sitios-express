@@ -5,7 +5,7 @@
 // de export las incluye en el .zip.
 
 import type { SiteConfig, Section, TemplateConfig } from "@/lib/site-config";
-import { SECTION_LABELS } from "@/lib/site-config";
+import { SECTION_LABELS, effectiveFonts } from "@/lib/site-config";
 
 const ROUNDED: Record<string, string> = { none: "0", md: "10px", xl: "20px", full: "32px" };
 
@@ -164,20 +164,58 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number): st
       const borderColor = c.borderColor || "#ffffff";
       const fx = ["zoom", "lift", "gray", "dark"].includes(c.hoverEffect) ? c.hoverEffect : c.hoverEffect === "none" ? "none" : "zoom";
       const cap = ["none", "always"].includes(c.captionMode) ? c.captionMode : "hover";
+      const radius = Number(c.radius ?? 16);
       const gridStyle = `grid-template-columns:repeat(${cols},1fr);column-gap:${gapX}px;row-gap:${gapY}px;`;
-      const imgStyle = borderWidth ? ` style="border:${borderWidth}px solid ${borderColor};"` : "";
+      const imgStyle = ` style="border-radius:${radius}px;${borderWidth ? `border:${borderWidth}px solid ${borderColor};` : ""}"`;
       return `<section ${attrs} class="gallery-section">
   <div class="container">
     <h2 class="section__title section__title--center reveal">${esc(c.title)}</h2>
     <div class="gallery gallery--fx-${fx} gallery--cap-${cap}" style="${gridStyle}">
       ${images
         .map(
-          (img) => `<figure class="gallery__item reveal">
+          (img) => `<figure class="gallery__item reveal" style="border-radius:${radius}px">
         <img class="gallery__image" src="${assetPath(img.url)}" alt="${esc(img.caption ?? "")}" loading="lazy"${imgStyle}>
-        ${img.caption ? `<figcaption class="gallery__caption">${esc(img.caption)}</figcaption>` : ""}
+        ${img.caption ? `<figcaption class="gallery__caption" style="border-radius:0 0 ${radius}px ${radius}px">${esc(img.caption)}</figcaption>` : ""}
       </figure>`
         )
         .join("\n")}
+    </div>
+  </div>
+</section>`;
+    }
+
+    case "carousel": {
+      const images: { url: string; caption?: string }[] = ((c.images as any[]) ?? [])
+        .map((i: any) => (typeof i === "string" ? { url: i } : i))
+        .filter((i: any) => i?.url)
+        .slice(0, 15);
+      if (images.length === 0) return "";
+      const interval = Math.min(10, Math.max(2, Number(c.interval) || 4)) * 1000;
+      const height = Math.min(640, Math.max(200, Number(c.height) || 400));
+      const radius = Number(c.radius ?? 16);
+      return `<section ${attrs} class="carousel-section">
+  <div class="container">
+    ${c.title ? `<h2 class="section__title section__title--center reveal">${esc(c.title)}</h2>` : ""}
+    <div class="carousel reveal" data-carousel data-interval="${interval}" style="border-radius:${radius}px">
+      <div class="carousel__track">
+        ${images
+          .map(
+            (img) => `<div class="carousel__slide" style="height:${height}px">
+          <img class="carousel__image" src="${assetPath(img.url)}" alt="${esc(img.caption ?? "")}" loading="lazy">
+          ${img.caption ? `<p class="carousel__caption">${esc(img.caption)}</p>` : ""}
+        </div>`
+          )
+          .join("\n")}
+      </div>
+      ${
+        images.length > 1
+          ? `<button class="carousel__arrow carousel__arrow--prev" aria-label="Anterior">‹</button>
+      <button class="carousel__arrow carousel__arrow--next" aria-label="Siguiente">›</button>
+      <div class="carousel__dots">
+        ${images.map((_, i) => `<button class="carousel__dot${i === 0 ? " is-active" : ""}" aria-label="Foto ${i + 1}"></button>`).join("\n        ")}
+      </div>`
+          : ""
+      }
     </div>
   </div>
 </section>`;
@@ -255,9 +293,11 @@ function headerHtml(config: SiteConfig, sections: Section[], pages: ExtraPage[],
   ];
   const links = () => navLinks.map((l) => `<a class="nav__link" href="${esc(l.href)}">${esc(l.label)}</a>`).join(`\n        `);
 
-  const logo = config.business.logoUrl
-    ? `<img src="${assetPath(config.business.logoUrl)}" alt="${esc(config.business.name)}" class="header__logo">`
-    : `<span class="header__logo-text">${esc(config.business.name)}</span>`;
+  const showName = config.business.showNameInHeader !== false || !config.business.logoUrl;
+  const logo =
+    (config.business.logoUrl
+      ? `<img src="${assetPath(config.business.logoUrl)}" alt="${esc(config.business.name)}" class="header__logo">`
+      : "") + (showName ? `<span class="header__logo-text">${esc(config.business.name)}</span>` : "");
 
   return `<header class="header">
     <div class="container header__inner">
@@ -325,7 +365,9 @@ ${body}
 </html>`;
 }
 
-export function generateStaticSite(config: SiteConfig, tpl: TemplateConfig): Record<string, string> {
+export function generateStaticSite(config: SiteConfig, tplBase: TemplateConfig): Record<string, string> {
+  // Tipografía: overrides del usuario (config.theme) sobre la del template
+  const tpl: TemplateConfig = { ...tplBase, fonts: effectiveFonts(config, tplBase) };
   const sections = [...config.sections].sort((a, b) => a.order - b.order);
   const pages = extraPages(config);
 
@@ -475,6 +517,21 @@ section { padding: 6rem 0; }
 .gallery--fx-dark .gallery__item:hover .gallery__image { filter: brightness(1); }
 @media (max-width: 640px) { .gallery { grid-template-columns: repeat(2, 1fr) !important; } }
 
+/* Bloque: carousel (autoplay via script.js) */
+.carousel { position: relative; overflow: hidden; margin-top: 2rem; }
+.carousel__track { display: flex; transition: transform .7s ease; }
+.carousel__slide { position: relative; min-width: 100%; }
+.carousel__image { width: 100%; height: 100%; object-fit: cover; display: block; }
+.carousel__caption { position: absolute; left: 0; right: 0; bottom: 0; padding: 1.2rem; color: #fff; font-size: .9rem; background: linear-gradient(transparent, rgba(0,0,0,.75)); }
+.carousel__arrow { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,.4); color: #fff; border: 0; border-radius: 999px; padding: .4rem .8rem; font-size: 1.2rem; cursor: pointer; transition: background .2s; }
+.carousel__arrow:hover { background: rgba(0,0,0,.6); }
+.carousel__arrow--prev { left: .8rem; }
+.carousel__arrow--next { right: .8rem; }
+.carousel__dots { position: absolute; left: 0; right: 0; bottom: .6rem; display: flex; justify-content: center; gap: .4rem; }
+.carousel__dot { width: 8px; height: 8px; border-radius: 999px; border: 0; padding: 0; background: rgba(255,255,255,.45); cursor: pointer; transition: all .25s; }
+.carousel__dot.is-active { width: 16px; background: #fff; }
+@media (max-width: 640px) { .carousel__slide { height: 240px !important; } }
+
 /* Bloque: map */
 .map__frame { width: 100%; height: 380px; border: 0; border-radius: 20px; margin-top: 2rem; }
 
@@ -548,6 +605,32 @@ function buildJs(): string {
     });
   }, { rootMargin: '-60px' });
   document.querySelectorAll('.reveal').forEach(function (el) { observer.observe(el); });
+
+  // Carruseles con autoplay
+  document.querySelectorAll('[data-carousel]').forEach(function (root) {
+    var track = root.querySelector('.carousel__track');
+    var slides = root.querySelectorAll('.carousel__slide');
+    var dots = root.querySelectorAll('.carousel__dot');
+    if (!track || slides.length < 2) return;
+    var idx = 0;
+    var interval = Number(root.getAttribute('data-interval')) || 4000;
+    var timer;
+    function go(i) {
+      idx = (i + slides.length) % slides.length;
+      track.style.transform = 'translateX(-' + idx * 100 + '%)';
+      dots.forEach(function (d, j) { d.classList.toggle('is-active', j === idx); });
+    }
+    function play() { timer = setInterval(function () { go(idx + 1); }, interval); }
+    function reset() { clearInterval(timer); play(); }
+    var prev = root.querySelector('.carousel__arrow--prev');
+    var next = root.querySelector('.carousel__arrow--next');
+    if (prev) prev.addEventListener('click', function () { go(idx - 1); reset(); });
+    if (next) next.addEventListener('click', function () { go(idx + 1); reset(); });
+    dots.forEach(function (d, j) { d.addEventListener('click', function () { go(j); reset(); }); });
+    root.addEventListener('mouseenter', function () { clearInterval(timer); });
+    root.addEventListener('mouseleave', play);
+    play();
+  });
 
   // Calculadora de cotización
   document.querySelectorAll('[data-quote]').forEach(function (box) {
