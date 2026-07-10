@@ -246,78 +246,115 @@ export function normalizeIframeSrc(raw: string | undefined | null): string {
 }
 
 /**
- * Convierte lo que el usuario pegue (enlace de Maps, share, o HTML de iframe)
- * en una URL válida para <iframe src>. Los links normales de Google Maps
- * no se pueden embeber tal cual (X-Frame-Options) y el iframe queda en blanco.
+ * Embed de Google Maps sin API key (formato actual 2024+).
+ * El viejo `?output=embed` ya no carga (404); hay que usar `/maps/embed?pb=…`.
+ */
+function googleMapsEmbedFromQuery(query: string): string {
+  const q = query.trim().replace(/\s+/g, " ");
+  if (!q) return "";
+  // encodeURIComponent + dejar comas legibles en coords
+  const encoded = encodeURIComponent(q).replace(/%2C/gi, ",");
+  return `https://www.google.com/maps/embed?pb=!1m2!2m1!1s${encoded}`;
+}
+
+/**
+ * Convierte lo que el usuario pegue (enlace de Maps, share, HTML de iframe o dirección)
+ * en una URL válida para <iframe src> de Google Maps.
  */
 export function normalizeMapEmbedUrl(raw: string | undefined | null): string {
   const input = String(raw ?? "").trim();
   if (!input) return "";
 
-  // 1) Pegaron el HTML completo del iframe de "Compartir → Insertar un mapa"
+  // 1) HTML del iframe de "Compartir → Insertar un mapa"
   const iframeSrc = input.match(/src=["']([^"']+)["']/i)?.[1];
-  let url = (iframeSrc || input).trim();
+  let url = (iframeSrc || input).trim().replace(/&amp;/g, "&");
 
-  // Decodificar entidades por si viene de un copy-paste raro
-  url = url.replace(/&amp;/g, "&");
-
-  // 2) Ya es una URL de embed → listo
-  if (/google\.[^/]+\/maps\/embed/i.test(url) || /maps\.google\.[^/]+\/maps\?.*output=embed/i.test(url)) {
+  // 2) Ya es URL de embed oficial → usarla tal cual
+  if (/google\.[^/]+\/maps\/embed/i.test(url)) {
+    if (url.startsWith("//")) url = `https:${url}`;
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
     return url;
   }
 
-  // 3) Coordenadas en el path: /@19.4326,-99.1332,17z
-  const atCoords = url.match(/@(-?\d+\.?\d*),(-?\d+\.?\d*)(?:,(\d+\.?\d*)z)?/);
-  if (atCoords) {
-    const [, lat, lng, zoom] = atCoords;
-    const z = zoom ? Math.round(Number(zoom)) : 15;
-    return `https://maps.google.com/maps?q=${lat},${lng}&z=${z}&output=embed&hl=es`;
+  // 3) Viejo formato ?output=embed → convertir a embed pb
+  if (/[?&]output=embed/i.test(url)) {
+    try {
+      const u = new URL(url.startsWith("http") ? url : `https://${url}`);
+      const q = u.searchParams.get("q") || u.searchParams.get("query") || "";
+      if (q) return googleMapsEmbedFromQuery(q);
+    } catch {
+      /* fall through */
+    }
   }
 
-  // 4) ?q= / query= / ll= lat,lng
+  // 4) Coordenadas en el path: /@19.4326,-99.1332,17z
+  const atCoords = url.match(/@(-?\d+\.?\d*),\s*(-?\d+\.?\d*)/);
+  if (atCoords) {
+    return googleMapsEmbedFromQuery(`${atCoords[1]},${atCoords[2]}`);
+  }
+
+  // 5) Solo lat,lng pegados (con o sin espacio)
+  const bareCoords = input.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+  if (bareCoords) {
+    return googleMapsEmbedFromQuery(`${bareCoords[1]},${bareCoords[2]}`);
+  }
+
+  // 6) Parámetros y paths de Google Maps
   try {
     const u = new URL(url.startsWith("http") ? url : `https://${url}`);
-    const q = u.searchParams.get("q") || u.searchParams.get("query");
-    if (q) {
-      return `https://maps.google.com/maps?q=${encodeURIComponent(q)}&z=15&output=embed&hl=es`;
-    }
-    const ll = u.searchParams.get("ll");
-    if (ll) {
-      return `https://maps.google.com/maps?q=${encodeURIComponent(ll)}&z=15&output=embed&hl=es`;
-    }
-    // /place/Nombre+Del+Lugar/
-    const place = u.pathname.match(/\/place\/([^/]+)/);
-    if (place?.[1]) {
-      const name = decodeURIComponent(place[1].replace(/\+/g, " "));
-      return `https://maps.google.com/maps?q=${encodeURIComponent(name)}&z=15&output=embed&hl=es`;
-    }
-    // /search/consulta
-    const search = u.pathname.match(/\/search\/([^/]+)/);
-    if (search?.[1]) {
-      const name = decodeURIComponent(search[1].replace(/\+/g, " "));
-      return `https://maps.google.com/maps?q=${encodeURIComponent(name)}&z=15&output=embed&hl=es`;
+    const host = u.hostname.replace(/^www\./, "");
+    const isGoogleMaps =
+      host === "google.com" ||
+      host.endsWith(".google.com") ||
+      host === "maps.google.com" ||
+      host.startsWith("maps.google.");
+
+    if (isGoogleMaps || host.includes("google.")) {
+      const q = u.searchParams.get("q") || u.searchParams.get("query");
+      if (q) return googleMapsEmbedFromQuery(q);
+
+      const ll = u.searchParams.get("ll");
+      if (ll) return googleMapsEmbedFromQuery(ll.replace(/\s+/g, ""));
+
+      // /maps/place/Nombre+Del+Lugar/
+      const place = u.pathname.match(/\/maps\/place\/([^/]+)/) || u.pathname.match(/\/place\/([^/]+)/);
+      if (place?.[1]) {
+        const name = decodeURIComponent(place[1].replace(/\+/g, " "));
+        // Quitar sufijos tipo data= del nombre si vinieron mal
+        return googleMapsEmbedFromQuery(name.split("?")[0]);
+      }
+
+      const search = u.pathname.match(/\/maps\/search\/([^/]+)/) || u.pathname.match(/\/search\/([^/]+)/);
+      if (search?.[1]) {
+        return googleMapsEmbedFromQuery(decodeURIComponent(search[1].replace(/\+/g, " ")));
+      }
+
+      // /maps/dir/ ... origen/destino → usar destino
+      const dir = u.pathname.match(/\/maps\/dir\/(?:[^/]+\/)?([^/]+)/);
+      if (dir?.[1] && dir[1] !== "") {
+        return googleMapsEmbedFromQuery(decodeURIComponent(dir[1].replace(/\+/g, " ")));
+      }
     }
   } catch {
-    // no es URL parseable
+    /* no es URL */
   }
 
-  // 5) Texto libre (dirección escrita a mano)
-  if (!/^https?:\/\//i.test(input) && !input.includes("<iframe")) {
-    return `https://maps.google.com/maps?q=${encodeURIComponent(input)}&z=15&output=embed&hl=es`;
-  }
-
-  // 6) Enlaces cortos (maps.app.goo.gl / goo.gl) no se pueden expandir aquí.
-  //    Devolvemos vacío para que el UI pida el enlace completo o la dirección.
+  // 7) Enlaces cortos: no se pueden expandir en el cliente
   if (/maps\.app\.goo\.gl|goo\.gl\/maps/i.test(url)) {
     return "";
   }
 
-  // 7) Último recurso: usar la URL completa como query (share links largos de Google)
-  if (/google\.[^/]+\/maps/i.test(url) || /maps\.google\./i.test(url)) {
-    return `https://maps.google.com/maps?q=${encodeURIComponent(url)}&z=15&output=embed&hl=es`;
+  // 8) Texto libre (dirección) o lo que quede
+  if (!/^https?:\/\//i.test(input) && !/<iframe/i.test(input)) {
+    return googleMapsEmbedFromQuery(input);
   }
 
-  return `https://maps.google.com/maps?q=${encodeURIComponent(input)}&z=15&output=embed&hl=es`;
+  // 9) URL de Maps no parseada: buscar como query
+  if (/google\.[^/]+\/maps|maps\.google\./i.test(url)) {
+    return googleMapsEmbedFromQuery(url);
+  }
+
+  return googleMapsEmbedFromQuery(input);
 }
 
 /**
@@ -381,11 +418,11 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
         ],
       };
     case "gallery":
-      // images: [{ url, caption }] — se limita a columns² fotos (grid N×N)
+      // images: [{ url, caption, colSpan?, rowSpan? }] — bento grid
       return {
         title: "Galería",
         images: [],
-        columns: 3,
+        columns: 3, // columnas de la grilla base
         gapX: 12,
         gapY: 12,
         borderWidth: 0,
@@ -393,6 +430,12 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
         radius: 16,
         hoverEffect: "zoom", // none | zoom | lift | gray | dark
         captionMode: "hover", // none | hover | always
+        // Ancho máximo del bloque de la cuadrícula (px). 0 = 100% del contenedor.
+        maxWidth: 960,
+        // Tamaño máximo de cada celda 1×1 (px). 0 = se reparte el ancho.
+        maxCell: 0,
+        // Alto de una fila de la grilla (px); define la proporción base 1×1
+        rowHeight: 160,
       };
     case "carousel":
       // Carrusel automático: images [{ url, caption }], interval en segundos

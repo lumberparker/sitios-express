@@ -40,9 +40,21 @@ function sectionBg(section: Section, tpl: TemplateConfig, index: number): React.
   return style;
 }
 
-function Reveal({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) {
+function Reveal({
+  children,
+  delay = 0,
+  style,
+  className,
+}: {
+  children: React.ReactNode;
+  delay?: number;
+  style?: React.CSSProperties;
+  className?: string;
+}) {
   return (
     <motion.div
+      className={className}
+      style={style}
       initial={{ opacity: 0, y: 24 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "-60px" }}
@@ -505,6 +517,15 @@ function SectionBody({
     case "map": {
       // Si no hay enlace usable, la dirección visible también sirve para el mapa
       const mapSrc = normalizeMapEmbedUrl(c.embedUrl) || normalizeMapEmbedUrl(c.address);
+      const openQuery = (c.address || c.embedUrl || "").trim();
+      const openHref =
+        openQuery && !/^https?:\/\//i.test(openQuery) && !/<iframe/i.test(openQuery)
+          ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(openQuery)}`
+          : openQuery && /^https?:\/\//i.test(openQuery) && !/\/maps\/embed/i.test(openQuery)
+            ? openQuery
+            : mapSrc
+              ? mapSrc.replace("/maps/embed?", "/maps?")
+              : "";
       return (
         <div className="mx-auto max-w-5xl px-6 py-24 text-center">
           <Reveal>
@@ -513,23 +534,33 @@ function SectionBody({
             </h2>
             {c.address && <p className="mt-3 opacity-75">{c.address}</p>}
           </Reveal>
-          <Reveal delay={0.15}>
-            {mapSrc ? (
+          {/* Sin Reveal alrededor del iframe: whileInView deja opacity:0 en el scroll anidado del builder */}
+          {mapSrc ? (
+            <div className="mt-8 overflow-hidden" style={{ borderRadius: 20 }}>
               <iframe
+                key={mapSrc}
                 src={mapSrc}
-                className="mt-8 h-96 w-full border-0"
-                style={{ borderRadius: 20 }}
-                loading="lazy"
+                className="h-96 w-full border-0"
+                style={{ borderRadius: 20, minHeight: 360 }}
+                loading="eager"
                 referrerPolicy="no-referrer-when-downgrade"
                 allowFullScreen
                 title="Mapa"
               />
-            ) : (
-              <div className="mt-8 flex h-64 items-center justify-center text-sm opacity-40" style={{ borderRadius: 20, border: "2px dashed currentColor" }}>
-                Pega un enlace de Google Maps o la dirección en el builder
-              </div>
-            )}
-          </Reveal>
+            </div>
+          ) : (
+            <div className="mt-8 flex h-64 flex-col items-center justify-center gap-2 text-sm opacity-50" style={{ borderRadius: 20, border: "2px dashed currentColor" }}>
+              <span>Pega un enlace de Google Maps o la dirección en el builder</span>
+              <span className="text-xs opacity-80">Los links cortos (maps.app.goo.gl) no funcionan: usa el enlace largo o la dirección</span>
+            </div>
+          )}
+          {mapSrc && openHref && (
+            <p className="mt-3 text-sm opacity-70">
+              <a href={openHref} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
+                Abrir en Google Maps ↗
+              </a>
+            </p>
+          )}
         </div>
       );
     }
@@ -590,19 +621,42 @@ function SectionBody({
   }
 }
 
-export type GalleryImage = { url: string; caption?: string };
+export type GalleryImage = {
+  url: string;
+  caption?: string;
+  /** Cuántas columnas de la grilla ocupa (1 = celda normal). */
+  colSpan?: number;
+  /** Cuántas filas de la grilla ocupa (1 = celda normal). */
+  rowSpan?: number;
+};
 
-/** Acepta el formato viejo (string[]) y el nuevo ([{ url, caption }]). */
-export function normalizeGalleryImages(raw: any): GalleryImage[] {
+/** Acepta el formato viejo (string[]) y el nuevo ([{ url, caption, colSpan, rowSpan }]). */
+export function normalizeGalleryImages(raw: any, maxCols = 10): GalleryImage[] {
   return ((raw as any[]) ?? [])
-    .map((i) => (typeof i === "string" ? { url: i } : i))
+    .map((i) => {
+      if (typeof i === "string") return { url: i, colSpan: 1, rowSpan: 1 };
+      if (!i?.url) return null;
+      const colSpan = Math.min(maxCols, Math.max(1, Number(i.colSpan) || 1));
+      const rowSpan = Math.min(maxCols, Math.max(1, Number(i.rowSpan) || 1));
+      return {
+        url: i.url as string,
+        caption: i.caption ? String(i.caption) : "",
+        colSpan,
+        rowSpan,
+      };
+    })
     .filter((i): i is GalleryImage => Boolean(i?.url));
 }
 
 function GallerySection({ section, heading }: { section: Section; heading: React.CSSProperties }) {
   const c = section.content;
   const cols = Math.min(10, Math.max(2, Number(c.columns) || 3));
-  const images = normalizeGalleryImages(c.images).slice(0, cols * cols);
+  // Hasta 24 fotos; el tamaño real lo marcan colSpan/rowSpan (layout tipo bento)
+  const images = normalizeGalleryImages(c.images, cols).slice(0, 24).map((img) => ({
+    ...img,
+    colSpan: Math.min(cols, img.colSpan ?? 1),
+    rowSpan: Math.min(cols, img.rowSpan ?? 1),
+  }));
   const gapX = Number(c.gapX ?? 12);
   const gapY = Number(c.gapY ?? 12);
   const borderWidth = Number(c.borderWidth ?? 0);
@@ -611,11 +665,27 @@ function GallerySection({ section, heading }: { section: Section; heading: React
   const effect = c.hoverEffect ?? "zoom";
   const capMode = c.captionMode ?? "hover";
   const id = section.id;
+  // 0 / full / ausente = 100% del contenedor (galerías viejas no se achican).
+  // Galerías nuevas traen maxWidth: 960 por defecto.
+  const maxWidthRaw = c.maxWidth;
+  const maxWidth =
+    maxWidthRaw === undefined ||
+    maxWidthRaw === null ||
+    maxWidthRaw === "" ||
+    maxWidthRaw === "full" ||
+    maxWidthRaw === 0 ||
+    maxWidthRaw === "0"
+      ? 0
+      : Math.min(1400, Math.max(320, Number(maxWidthRaw) || 960));
+  const maxCell = Math.min(600, Math.max(0, Number(c.maxCell ?? 0) || 0));
+  // Alto de una fila de la grilla (= celda 1×1). Con maxCell se alinea al ancho de celda.
+  const rowTrack = maxCell > 0 ? maxCell : Math.min(220, Math.max(100, Number(c.rowHeight ?? 160) || 160));
 
-  // Reglas dinámicas (hover/caption) con alcance por sección
+  // Reglas dinámicas (hover/caption/spans) con alcance por sección
   const css = [
-    `#${id} .g-item{position:relative;overflow:hidden;border-radius:${radius}px}`,
-    `#${id} .g-item img{aspect-ratio:1;width:100%;object-fit:cover;display:block;border-radius:${radius}px;transition:transform .35s ease,filter .35s ease;${
+    `#${id} .g-cell{min-width:0;min-height:0}`,
+    `#${id} .g-item{position:relative;overflow:hidden;border-radius:${radius}px;width:100%;height:100%;margin:0}`,
+    `#${id} .g-item img{width:100%;height:100%;object-fit:cover;display:block;border-radius:${radius}px;transition:transform .35s ease,filter .35s ease;${
       borderWidth ? `border:${borderWidth}px solid ${borderColor};` : ""
     }}`,
     `#${id} .g-cap{position:absolute;left:0;right:0;bottom:0;padding:.9rem;color:#fff;font-size:.85rem;background:linear-gradient(transparent,rgba(0,0,0,.75));border-radius:0 0 ${radius}px ${radius}px;transition:opacity .3s}`,
@@ -625,8 +695,27 @@ function GallerySection({ section, heading }: { section: Section; heading: React
     effect === "lift" ? `#${id} .g-item{transition:transform .3s,box-shadow .3s} #${id} .g-item:hover{transform:translateY(-6px);box-shadow:0 16px 32px rgba(0,0,0,.25)}` : "",
     effect === "gray" ? `#${id} .g-item img{filter:grayscale(1)} #${id} .g-item:hover img{filter:grayscale(0)}` : "",
     effect === "dark" ? `#${id} .g-item img{filter:brightness(.72)} #${id} .g-item:hover img{filter:brightness(1)}` : "",
-    `@media (max-width:640px){ #${id} .g-grid{grid-template-columns:repeat(2,1fr)!important} }`,
+    // Móvil: 2 columnas y celdas 1×1 (el bento completo se ve en desktop)
+    maxCell
+      ? `@media (max-width:640px){ #${id} .g-grid{grid-template-columns:repeat(2, minmax(0, ${maxCell}px))!important; grid-auto-rows:${Math.min(rowTrack, maxCell)}px!important; justify-content:center} #${id} .g-cell{grid-column:span 1!important;grid-row:span 1!important} }`
+      : `@media (max-width:640px){ #${id} .g-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important; grid-auto-rows:${rowTrack}px!important} #${id} .g-cell{grid-column:span 1!important;grid-row:span 1!important} }`,
   ].join("\n");
+
+  const gridStyle: React.CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: maxCell
+      ? `repeat(${cols}, minmax(0, ${maxCell}px))`
+      : `repeat(${cols}, minmax(0, 1fr))`,
+    gridAutoRows: `${rowTrack}px`,
+    gridAutoFlow: "dense",
+    columnGap: gapX,
+    rowGap: gapY,
+    justifyContent: maxCell ? "center" : undefined,
+    width: "100%",
+    maxWidth: maxWidth > 0 ? maxWidth : undefined,
+    marginLeft: "auto",
+    marginRight: "auto",
+  };
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-24">
@@ -637,19 +726,29 @@ function GallerySection({ section, heading }: { section: Section; heading: React
         </h2>
       </Reveal>
       {images.length > 0 ? (
-        <div
-          className="g-grid mt-12"
-          style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, columnGap: gapX, rowGap: gapY }}
-        >
-          {images.map((img, i) => (
-            <Reveal key={i} delay={Math.min(i * 0.04, 0.4)}>
-              <figure className="g-item">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={img.url} alt={img.caption || ""} />
-                {img.caption && <figcaption className="g-cap">{img.caption}</figcaption>}
-              </figure>
-            </Reveal>
-          ))}
+        <div className="g-grid mt-12" style={gridStyle}>
+          {images.map((img, i) => {
+            const cs = img.colSpan ?? 1;
+            const rs = img.rowSpan ?? 1;
+            return (
+              <Reveal
+                key={i}
+                delay={Math.min(i * 0.04, 0.4)}
+                className="g-cell"
+                style={{
+                  gridColumn: `span ${cs}`,
+                  gridRow: `span ${rs}`,
+                  minHeight: 0,
+                }}
+              >
+                <figure className="g-item">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={img.url} alt={img.caption || ""} />
+                  {img.caption && <figcaption className="g-cap">{img.caption}</figcaption>}
+                </figure>
+              </Reveal>
+            );
+          })}
         </div>
       ) : (
         <p className="mt-12 text-center text-sm opacity-50">Agrega fotos desde el builder.</p>

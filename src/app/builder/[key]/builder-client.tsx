@@ -1121,17 +1121,22 @@ function SectionEditor({
           )}
           {section.type === "map" && (
             <>
-              <div><Label>Dirección visible</Label><Input value={c.address ?? ""} onChange={setContent("address")} /></div>
+              <div>
+                <Label>Dirección visible</Label>
+                <Input value={c.address ?? ""} onChange={setContent("address")} placeholder="Ej. Av. Juárez 30, CDMX" />
+              </div>
               <div>
                 <Label>Enlace de Google Maps</Label>
-                <Input
+                <Textarea
+                  rows={3}
                   value={c.embedUrl ?? ""}
                   onChange={setContent("embedUrl")}
-                  placeholder="Pega el enlace de Maps, o el código del iframe"
+                  placeholder="Pega el enlace de Maps, coordenadas, o el HTML del iframe"
                 />
                 <p className="mt-1 text-[11px] text-slate-500">
-                  Acepta el enlace normal de Maps (Compartir → copiar enlace), la dirección escrita, o el HTML de{" "}
-                  <b>Insertar un mapa</b>. Los links cortos (maps.app.goo.gl) a veces fallan: mejor el enlace completo o las coordenadas.
+                  Funciona con: enlace largo de Maps (barra de direcciones), código de <b>Compartir → Insertar un mapa</b>,
+                  coordenadas (<code className="rounded bg-slate-100 px-1">19.43,-99.13</code>) o solo la dirección.
+                  No uses links cortos <code className="rounded bg-slate-100 px-1">maps.app.goo.gl</code>.
                 </p>
               </div>
             </>
@@ -1280,21 +1285,25 @@ function ItemsEditor({ section, onChange }: { section: Section; onChange: (fn: (
   );
 }
 
+type GalleryImg = { url: string; caption?: string; colSpan?: number; rowSpan?: number };
+
 function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn: (s: Section) => void) => void }) {
   const c = section.content;
   const cols = Math.min(10, Math.max(2, Number(c.columns) || 3));
-  const images: { url: string; caption?: string }[] = ((c.images as any[]) ?? [])
-    .map((i) => (typeof i === "string" ? { url: i } : i))
+  const images: GalleryImg[] = ((c.images as any[]) ?? [])
+    .map((i) => (typeof i === "string" ? { url: i, colSpan: 1, rowSpan: 1 } : i))
     .filter((i) => i?.url);
-  const max = cols * cols;
+  const max = 24;
   const set = (k: string, v: any) => onChange((s) => (s.content[k] = v));
-  const setImages = (imgs: { url: string; caption?: string }[]) => set("images", imgs);
+  const setImages = (imgs: GalleryImg[]) => set("images", imgs);
+  const patchImage = (i: number, patch: Partial<GalleryImg>) =>
+    setImages(images.map((x, j) => (j === i ? { ...x, ...patch } : x)));
 
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <Label>Cuadrícula</Label>
+          <Label>Columnas de la grilla</Label>
           <select
             value={cols}
             onChange={(e) => set("columns", Number(e.target.value))}
@@ -1302,10 +1311,11 @@ function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn:
           >
             {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => (
               <option key={n} value={n}>
-                {n} × {n} (hasta {n * n} fotos)
+                {n} columnas
               </option>
             ))}
           </select>
+          <p className="mt-0.5 text-[11px] text-slate-400">Base del layout. Cada foto puede ocupar varias celdas.</p>
         </div>
         <div>
           <Label>Efecto al pasar el mouse</Label>
@@ -1321,6 +1331,78 @@ function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn:
             <option value="dark">Oscuro → claro</option>
           </select>
         </div>
+      </div>
+
+      <div>
+        <Label>
+          Ancho de la cuadrícula (
+          {c.maxWidth === undefined ||
+          c.maxWidth === null ||
+          c.maxWidth === "" ||
+          c.maxWidth === 0 ||
+          c.maxWidth === "full" ||
+          c.maxWidth === "0"
+            ? "100%"
+            : `${Number(c.maxWidth)}px`}
+          )
+        </Label>
+        <input
+          type="range"
+          min={0}
+          max={1400}
+          step={20}
+          value={
+            c.maxWidth === undefined ||
+            c.maxWidth === null ||
+            c.maxWidth === "" ||
+            c.maxWidth === 0 ||
+            c.maxWidth === "full" ||
+            c.maxWidth === "0"
+              ? 0
+              : Math.min(1400, Math.max(0, Number(c.maxWidth)))
+          }
+          onChange={(e) => set("maxWidth", Number(e.target.value))}
+          className="w-full"
+        />
+        <p className="mt-0.5 text-[11px] text-slate-400">
+          0 = todo el ancho disponible. Baja el valor (ej. 640–960) para una galería más compacta y centrada.
+        </p>
+      </div>
+
+      <div>
+        <Label>
+          Tamaño máx. celda 1×1 (
+          {Number(c.maxCell ?? 0) > 0 ? `${Number(c.maxCell)}px` : "sin límite"}
+          )
+        </Label>
+        <input
+          type="range"
+          min={0}
+          max={400}
+          step={10}
+          value={Math.min(400, Math.max(0, Number(c.maxCell ?? 0)))}
+          onChange={(e) => set("maxCell", Number(e.target.value))}
+          className="w-full"
+        />
+        <p className="mt-0.5 text-[11px] text-slate-400">
+          0 = el ancho se reparte entre columnas. Con límite, la grilla se centra.
+        </p>
+      </div>
+
+      <div>
+        <Label>Alto de fila base ({Number(c.rowHeight ?? 160)}px)</Label>
+        <input
+          type="range"
+          min={80}
+          max={320}
+          step={10}
+          value={Math.min(320, Math.max(80, Number(c.rowHeight ?? 160)))}
+          onChange={(e) => set("rowHeight", Number(e.target.value))}
+          className="w-full"
+        />
+        <p className="mt-0.5 text-[11px] text-slate-400">
+          Define la altura de una celda 1×1. Una foto de 2 filas mide el doble de alto.
+        </p>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -1373,28 +1455,80 @@ function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn:
         <Label>
           Fotos ({images.length} de {max})
         </Label>
+        <p className="mb-2 text-[11px] text-slate-500">
+          En cada foto elige cuántas <b>columnas</b> (ancho) y <b>filas</b> (alto) ocupa en la grilla. Ej: 2×1 = panorámica; 1×2 = vertical alta; 2×2 = grande.
+        </p>
         {images.length >= max ? (
           <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-700">
-            Cuadrícula llena. Cambia a una cuadrícula más grande o quita una foto.
+            Límite de {max} fotos. Quita una para agregar otra.
           </p>
         ) : (
-          <ImageField label="Agregar foto" value="" onUploaded={(url) => setImages([...images, { url, caption: "" }])} />
+          <ImageField
+            label="Agregar foto"
+            value=""
+            onUploaded={(url) => setImages([...images, { url, caption: "", colSpan: 1, rowSpan: 1 }])}
+          />
         )}
         <div className="mt-2 space-y-2">
-          {images.map((img, i) => (
-            <div key={i} className="flex items-center gap-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={img.url} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
-              <Input
-                placeholder="Texto de esta foto (opcional)"
-                value={img.caption ?? ""}
-                onChange={(e) => setImages(images.map((x, j) => (j === i ? { ...x, caption: e.target.value } : x)))}
-              />
-              <button onClick={() => setImages(images.filter((_, j) => j !== i))} className="shrink-0 text-xs text-rose-500 hover:underline">
-                ✕
-              </button>
-            </div>
-          ))}
+          {images.map((img, i) => {
+            const colSpan = Math.min(cols, Math.max(1, Number(img.colSpan) || 1));
+            const rowSpan = Math.min(cols, Math.max(1, Number(img.rowSpan) || 1));
+            return (
+              <div key={i} className="rounded-lg border border-slate-200 bg-white p-2 space-y-2">
+                <div className="flex items-center gap-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={img.url} alt="" className="h-12 w-12 shrink-0 rounded object-cover" />
+                  <Input
+                    placeholder="Texto de esta foto (opcional)"
+                    value={img.caption ?? ""}
+                    onChange={(e) => patchImage(i, { caption: e.target.value })}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setImages(images.filter((_, j) => j !== i))}
+                    className="shrink-0 text-xs text-rose-500 hover:underline"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label className="text-[11px]">Ancho (columnas)</Label>
+                    <select
+                      value={colSpan}
+                      onChange={(e) => patchImage(i, { colSpan: Number(e.target.value) })}
+                      className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-xs"
+                    >
+                      {Array.from({ length: cols }, (_, n) => n + 1).map((n) => (
+                        <option key={n} value={n}>
+                          {n} {n === 1 ? "columna" : "columnas"}
+                          {n === cols ? " (todo el ancho)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <Label className="text-[11px]">Alto (filas)</Label>
+                    <select
+                      value={rowSpan}
+                      onChange={(e) => patchImage(i, { rowSpan: Number(e.target.value) })}
+                      className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-xs"
+                    >
+                      {Array.from({ length: cols }, (_, n) => n + 1).map((n) => (
+                        <option key={n} value={n}>
+                          {n} {n === 1 ? "fila" : "filas"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-400">
+                  Ocupa <b>{colSpan}×{rowSpan}</b> celdas
+                  {colSpan > 1 || rowSpan > 1 ? " · layout tipo bento" : ""}
+                </p>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

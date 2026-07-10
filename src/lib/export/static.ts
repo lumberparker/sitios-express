@@ -192,10 +192,19 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
 
     case "gallery": {
       const cols = Math.min(10, Math.max(2, Number(c.columns) || 3));
-      const images: { url: string; caption?: string }[] = ((c.images as any[]) ?? [])
-        .map((i: any) => (typeof i === "string" ? { url: i } : i))
-        .filter((i: any) => i?.url)
-        .slice(0, cols * cols);
+      const images: { url: string; caption?: string; colSpan: number; rowSpan: number }[] = ((c.images as any[]) ?? [])
+        .map((i: any) => {
+          if (typeof i === "string") return { url: i, caption: "", colSpan: 1, rowSpan: 1 };
+          if (!i?.url) return null;
+          return {
+            url: i.url as string,
+            caption: i.caption ? String(i.caption) : "",
+            colSpan: Math.min(cols, Math.max(1, Number(i.colSpan) || 1)),
+            rowSpan: Math.min(cols, Math.max(1, Number(i.rowSpan) || 1)),
+          };
+        })
+        .filter((i: any): i is { url: string; caption: string; colSpan: number; rowSpan: number } => Boolean(i?.url))
+        .slice(0, 24);
       const gapX = Number(c.gapX ?? 12);
       const gapY = Number(c.gapY ?? 12);
       const borderWidth = Number(c.borderWidth ?? 0);
@@ -203,7 +212,35 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
       const fx = ["zoom", "lift", "gray", "dark"].includes(c.hoverEffect) ? c.hoverEffect : c.hoverEffect === "none" ? "none" : "zoom";
       const cap = ["none", "always"].includes(c.captionMode) ? c.captionMode : "hover";
       const radius = Number(c.radius ?? 16);
-      const gridStyle = `grid-template-columns:repeat(${cols},1fr);column-gap:${gapX}px;row-gap:${gapY}px;`;
+      const maxWidthRaw = c.maxWidth;
+      const maxWidth =
+        maxWidthRaw === undefined ||
+        maxWidthRaw === null ||
+        maxWidthRaw === "" ||
+        maxWidthRaw === "full" ||
+        maxWidthRaw === 0 ||
+        maxWidthRaw === "0"
+          ? 0
+          : Math.min(1400, Math.max(320, Number(maxWidthRaw) || 960));
+      const maxCell = Math.min(600, Math.max(0, Number(c.maxCell ?? 0) || 0));
+      const rowTrack = maxCell > 0 ? maxCell : Math.min(220, Math.max(100, Number(c.rowHeight ?? 160) || 160));
+      const colsRule = maxCell
+        ? `repeat(${cols},minmax(0,${maxCell}px))`
+        : `repeat(${cols},minmax(0,1fr))`;
+      const gridStyle = [
+        `grid-template-columns:${colsRule}`,
+        `grid-auto-rows:${rowTrack}px`,
+        "grid-auto-flow:dense",
+        `column-gap:${gapX}px`,
+        `row-gap:${gapY}px`,
+        maxCell ? "justify-content:center" : "",
+        "width:100%",
+        maxWidth > 0 ? `max-width:${maxWidth}px` : "",
+        "margin-left:auto",
+        "margin-right:auto",
+      ]
+        .filter(Boolean)
+        .join(";");
       const imgStyle = ` style="border-radius:${radius}px;${borderWidth ? `border:${borderWidth}px solid ${borderColor};` : ""}"`;
       return `<section ${attrs} class="gallery-section">
   <div class="container">
@@ -211,7 +248,7 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
     <div class="gallery gallery--fx-${fx} gallery--cap-${cap}" style="${gridStyle}">
       ${images
         .map(
-          (img) => `<figure class="gallery__item reveal" style="border-radius:${radius}px">
+          (img) => `<figure class="gallery__item reveal" style="border-radius:${radius}px;grid-column:span ${img.colSpan};grid-row:span ${img.rowSpan}">
         <img class="gallery__image" src="${assetPath(img.url)}" alt="${esc(img.caption ?? "")}" loading="lazy"${imgStyle}>
         ${img.caption ? `<figcaption class="gallery__caption" style="border-radius:0 0 ${radius}px ${radius}px">${esc(img.caption)}</figcaption>` : ""}
       </figure>`
@@ -563,10 +600,10 @@ section { padding: 6rem 0; }
 .testimonial__text { font-style: italic; opacity: .88; }
 .testimonial__author { margin-top: 1rem; font-size: .9rem; }
 
-/* Bloque: gallery (cuadrícula, espaciados y borde van inline desde el builder) */
-.gallery { display: grid; margin-top: 3rem; }
-.gallery__item { position: relative; overflow: hidden; border-radius: 16px; margin: 0; }
-.gallery__image { aspect-ratio: 1; width: 100%; object-fit: cover; display: block; border-radius: 16px; transition: transform .35s ease, filter .35s ease; }
+/* Bloque: gallery bento (spans, espaciados y borde van inline desde el builder) */
+.gallery { display: grid; margin-top: 3rem; grid-auto-flow: dense; }
+.gallery__item { position: relative; overflow: hidden; border-radius: 16px; margin: 0; min-width: 0; min-height: 0; width: 100%; height: 100%; }
+.gallery__image { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 16px; transition: transform .35s ease, filter .35s ease; }
 .gallery__caption { position: absolute; left: 0; right: 0; bottom: 0; padding: .9rem; color: #fff; font-size: .85rem; background: linear-gradient(transparent, rgba(0,0,0,.75)); border-radius: 0 0 16px 16px; transition: opacity .3s; }
 /* Modificadores: texto sobre la imagen */
 .gallery--cap-hover .gallery__caption { opacity: 0; }
@@ -580,7 +617,10 @@ section { padding: 6rem 0; }
 .gallery--fx-gray .gallery__item:hover .gallery__image { filter: grayscale(0); }
 .gallery--fx-dark .gallery__image { filter: brightness(.72); }
 .gallery--fx-dark .gallery__item:hover .gallery__image { filter: brightness(1); }
-@media (max-width: 640px) { .gallery { grid-template-columns: repeat(2, 1fr) !important; } }
+@media (max-width: 640px) {
+  .gallery { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .gallery__item { grid-column: span 1 !important; grid-row: span 1 !important; }
+}
 
 /* Bloque: carousel (autoplay via script.js) */
 .carousel { position: relative; overflow: hidden; margin-top: 2rem; }
