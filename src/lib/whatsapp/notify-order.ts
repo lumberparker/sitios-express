@@ -1,25 +1,22 @@
 import { prisma } from "@/lib/prisma";
-import { sendWhatsApp, wapisimoConfigStatus } from "@/lib/whatsapp/wapisimo";
+import { normalizeMexicoMobile, sendWhatsApp, wapisimoConfigStatus } from "@/lib/whatsapp/wapisimo";
 
 function appUrl() {
   return (process.env.NEXTAUTH_URL ?? "http://localhost:3000").replace(/\/$/, "");
 }
 
-/**
- * Número que recibe los avisos de pedidos.
- * Prioridad: ORDER_NOTIFY_WHATSAPP → SUPPORT_WHATSAPP → 529993912818
- */
 function envVal(name: string): string {
   return (process.env[name] ?? "").trim().replace(/^["']|["']$/g, "").trim();
 }
 
+/** Número del equipo que recibe avisos de pedidos. */
 export function orderNotifyDigits(): string {
   const raw =
     envVal("ORDER_NOTIFY_WHATSAPP") ||
     envVal("SUPPORT_WHATSAPP") ||
     envVal("NEXT_PUBLIC_SUPPORT_WHATSAPP") ||
     "529993912818";
-  return raw.replace(/\D/g, "");
+  return normalizeMexicoMobile(raw);
 }
 
 type LineItem = {
@@ -29,9 +26,18 @@ type LineItem = {
   subtotal?: number;
 };
 
+function formatDisplayPhone(digits: string): string {
+  const d = normalizeMexicoMobile(digits);
+  if (d.length === 12 && d.startsWith("52")) {
+    return `+52 ${d.slice(2, 5)} ${d.slice(5, 8)} ${d.slice(8)}`;
+  }
+  return d ? `+${d}` : "—";
+}
+
 /**
- * Envía por WhatsApp (Wapisimo) el resumen del pedido cuando un sitio se paga.
- * Destino por defecto: +52 999 391 2818
+ * Envía por WhatsApp:
+ * 1) Resumen al equipo (con WhatsApp del cliente para contactarlo)
+ * 2) Confirmación al cliente (si dejó su número)
  */
 export async function notifyOrderPaid(siteId: string): Promise<void> {
   try {
@@ -41,18 +47,11 @@ export async function notifyOrderPaid(siteId: string): Promise<void> {
     });
     if (!site?.invoice) return;
 
-    const to = orderNotifyDigits();
-    if (!to) {
-      console.warn("[notify-order] sin número de destino (ORDER_NOTIFY_WHATSAPP)");
-      return;
-    }
-
     const wapi = wapisimoConfigStatus();
     if (!wapi.ok) {
-      console.warn(`[notify-order] Wapisimo no listo: ${wapi.reason} — no se envía a ${to}`);
+      console.warn(`[notify-order] Wapisimo no listo: ${wapi.reason}`);
       return;
     }
-    console.log(`[notify-order] enviando resumen a ${to} (phoneId=${wapi.phoneId})`);
 
     const config = site.config as {
       business?: { name?: string; email?: string; phone?: string };
@@ -68,6 +67,11 @@ export async function notifyOrderPaid(siteId: string): Promise<void> {
       (w) => w.widgetId === "montaje-con-dominio" || w.widgetId === "montaje-sin-dominio"
     );
 
+    const clientWa = normalizeMexicoMobile(
+      config.whatsapp?.number || config.business?.phone || ""
+    );
+    const clientWaDisplay = clientWa ? formatDisplayPhone(clientWa) : "— (no indicado)";
+
     const lineItems = (Array.isArray(site.invoice.lineItems) ? site.invoice.lineItems : []) as LineItem[];
     const itemsBlock =
       lineItems.length > 0
@@ -80,18 +84,17 @@ export async function notifyOrderPaid(siteId: string): Promise<void> {
             .join("\n")
         : "• (sin desglose)";
 
-    const contact =
-      config.business?.email ||
-      config.whatsapp?.number ||
-      config.business?.phone ||
-      "—";
+    const email = config.business?.email?.trim() || "—";
 
-    const lines = [
+    // —— Mensaje al equipo ——
+    const adminLines = [
       "🧾 *Nuevo pedido pagado*",
       "",
       `*Sitio:* ${name}`,
       `*Template:* ${site.template?.name ?? "—"}`,
-      `*Contacto:* ${contact}`,
+      `*WhatsApp del cliente:* ${clientWaDisplay}`,
+      clientWa ? `https://wa.me/${clientWa}` : "",
+      `*Email:* ${email}`,
       `*Total:* $${site.invoice.total} MXN`,
       `*Pagado:* $${site.invoice.paidTotal} MXN`,
       "",
@@ -100,24 +103,56 @@ export async function notifyOrderPaid(siteId: string): Promise<void> {
       "",
       `Editor: ${editorUrl}`,
       `Vista previa: ${previewUrl}`,
-    ];
+    ].filter(Boolean);
 
     if (montaje) {
       const cfg = (montaje.config ?? {}) as { desiredDomain?: string; subdomain?: string };
-      lines.push("");
+      adminLines.push("");
       if (montaje.widgetId === "montaje-con-dominio") {
         const domain = String(cfg.desiredDomain ?? "").trim();
-        lines.push("🔧 *Montaje con dominio*");
-        lines.push(domain ? `Dominio: ${domain}` : "Dominio: (no indicado)");
+        adminLines.push("🔧 *Montaje con dominio*");
+        adminLines.push(domain ? `Dominio: ${domain}` : "Dominio: (no indicado)");
       } else {
         const sub = String(cfg.subdomain ?? "").trim();
-        lines.push("🔧 *Montaje en línea (Netlify)*");
-        lines.push(sub ? `Sitio: ${sub}.netlify.app` : "Subdominio: (no indicado)");
+        adminLines.push("🔧 *Montaje en línea (Netlify)*");
+        adminLines.push(sub ? `Sitio: ${sub}.netlify.app` : "Subdominio: (no indicado)");
       }
     }
 
-    await sendWhatsApp(to, lines.join("\n"));
-    console.log(`[notify-order] resumen enviado a ${to} (sitio ${siteId})`);
+    const teamTo = orderNotifyDigits();
+    if (teamTo) {
+      console.log(`[notify-order] enviando al equipo ${teamTo}`);
+      await sendWhatsApp(teamTo, adminLines.join("\n"));
+      console.log(`[notify-order] OK equipo ${teamTo}`);
+    }
+
+    // —— Confirmación al cliente (1 s de espera: cola de Wapisimo ~1 msg/s) ——
+    if (clientWa && clientWa !== teamTo) {
+      await new Promise((r) => setTimeout(r, 1100));
+      const clientLines = [
+        `✅ *¡Pago confirmado!*`,
+        "",
+        `Hola, recibimos el pago de tu sitio *${name}*.`,
+        "",
+        `*Total pagado:* $${site.invoice.paidTotal || site.invoice.total} MXN`,
+        "",
+        "*Tu pedido:*",
+        itemsBlock,
+        "",
+        `Puedes seguir editando y descargar tu sitio aquí:`,
+        editorUrl,
+        "",
+        `Vista previa: ${previewUrl}`,
+        "",
+        "Si pediste *montaje*, el equipo se pondrá en contacto contigo pronto.",
+        "¡Gracias por confiar en Sitios Web Express!",
+      ];
+      console.log(`[notify-order] enviando confirmación al cliente ${clientWa}`);
+      await sendWhatsApp(clientWa, clientLines.join("\n"));
+      console.log(`[notify-order] OK cliente ${clientWa}`);
+    } else if (!clientWa) {
+      console.warn("[notify-order] cliente sin WhatsApp guardado — solo se avisó al equipo");
+    }
   } catch (err) {
     console.error("[notify-order] error:", err);
   }

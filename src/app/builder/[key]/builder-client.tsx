@@ -281,94 +281,143 @@ export function BuilderClient({
   const sorted = [...config.sections].sort((a, b) => a.order - b.order);
 
   return (
-    <div className="app-surface flex h-screen flex-col bg-slate-100">
-      {/* Barra superior */}
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-2.5">
-        <div className="flex items-center gap-3">
-          <span className="font-semibold text-slate-900">{config.business.name}</span>
-          <Badge tone="indigo">{template.name}</Badge>
-          {status === "COMPLETED" && <Badge tone="slate">Pedido registrado</Badge>}
-          {status === "PAID" && <Badge tone="green">Pagado</Badge>}
-        </div>
-        <div className="flex items-center gap-2">
-          {savedAt && !saving && <span className="text-xs text-slate-400">Guardado {savedAt.toLocaleTimeString()}</span>}
-          {error && <span className="text-xs text-rose-600">{error}</span>}
-          <Button variant="ghost" size="sm" onClick={copyLink}>
-            {linkCopied ? "✓ Copiado" : "🔗 Copiar mi enlace"}
-          </Button>
-          <Link href={`/preview/${siteKey}`} target="_blank">
-            <Button variant="outline" size="sm">
-              Vista previa ↗
+    <div className="app-surface flex h-[100dvh] max-w-[100vw] flex-col overflow-x-hidden bg-slate-100">
+      {/* Barra superior — apilada y sin overflow en móvil */}
+      <header className="shrink-0 border-b border-slate-200 bg-white px-3 py-2 sm:px-4 sm:py-2.5">
+        <div className="flex min-w-0 flex-col gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="min-w-0 truncate text-sm font-semibold text-slate-900 sm:text-base">
+              {config.business.name}
+            </span>
+            <Badge tone="indigo" className="hidden shrink-0 sm:inline-flex">
+              {template.name}
+            </Badge>
+            {status === "COMPLETED" && (
+              <Badge tone="slate" className="hidden shrink-0 md:inline-flex">
+                Pedido
+              </Badge>
+            )}
+            {status === "PAID" && (
+              <Badge tone="green" className="shrink-0">
+                Pagado
+              </Badge>
+            )}
+          </div>
+
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {savedAt && !saving && (
+              <span className="order-last w-full text-[10px] text-slate-400 sm:order-none sm:w-auto sm:text-xs">
+                Guardado {savedAt.toLocaleTimeString()}
+              </span>
+            )}
+            {error && <span className="w-full text-[11px] text-rose-600 sm:w-auto">{error}</span>}
+
+            <Button variant="ghost" size="sm" onClick={copyLink} className="h-9 min-h-9 px-2.5 text-xs sm:h-8 sm:text-sm">
+              <span className="sm:hidden">{linkCopied ? "✓" : "🔗"}</span>
+              <span className="hidden sm:inline">{linkCopied ? "✓ Copiado" : "🔗 Enlace"}</span>
             </Button>
-          </Link>
-          {status === "PAID" ? (
-            <a href={`/api/sites/${siteKey}/export`}>
-              <Button variant="secondary" size="sm">
-                Descargar .zip
+
+            <Link href={`/preview/${siteKey}`} target="_blank" className="hidden sm:inline-flex">
+              <Button variant="outline" size="sm" className="h-8 text-xs sm:text-sm">
+                Vista ↗
               </Button>
-            </a>
-          ) : (
-            <Button variant="secondary" size="sm" disabled title="La descarga del código se habilita cuando tu pago esté confirmado">
-              🔒 Descargar .zip
+            </Link>
+
+            {status === "PAID" ? (
+              <a href={`/api/sites/${siteKey}/export`} className="hidden sm:inline-flex">
+                <Button variant="secondary" size="sm" className="h-8 text-xs sm:text-sm">
+                  .zip
+                </Button>
+              </a>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled
+                title="La descarga se habilita con el pago confirmado"
+                className="hidden h-8 sm:inline-flex"
+              >
+                🔒 .zip
+              </Button>
+            )}
+
+            <PayButton
+              siteKey={siteKey}
+              lineItems={invoice.lineItems}
+              total={invoice.total}
+              paidTotal={paidTotal}
+              status={status}
+              initialWhatsapp={config.whatsapp?.number ?? config.business?.phone ?? ""}
+              prepareCheckout={async (customerWhatsapp) => {
+                const next = structuredClone(config);
+                next.whatsapp = {
+                  ...next.whatsapp,
+                  enabled: true,
+                  number: customerWhatsapp,
+                  defaultMessage:
+                    next.whatsapp?.defaultMessage ||
+                    "Hola, vi su sitio web y me gustaría más información.",
+                };
+                if (!next.business.phone?.trim()) next.business.phone = customerWhatsapp;
+                setConfig(next);
+                const res = await fetch(`/api/sites/${siteKey}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ config: next }),
+                });
+                if (!res.ok) return false;
+                const j = await res.json().catch(() => ({}));
+                if (j.status) setStatus(j.status);
+                if (j.invoice?.paidTotal !== undefined) setPaidTotal(j.invoice.paidTotal);
+                return true;
+              }}
+            />
+
+            <Button
+              size="sm"
+              onClick={save}
+              disabled={saving}
+              className="h-9 min-h-9 flex-1 px-3 text-xs sm:h-8 sm:flex-none sm:text-sm"
+            >
+              {saving ? "…" : "Guardar"}
             </Button>
-          )}
-          <PayButton
-            siteKey={siteKey}
-            lineItems={invoice.lineItems}
-            total={invoice.total}
-            paidTotal={paidTotal}
-            status={status}
-            prepareCheckout={async () => {
-              // Sincroniza config + factura en el servidor antes de crear la sesión de Stripe
-              const res = await fetch(`/api/sites/${siteKey}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ config }),
-              });
-              if (!res.ok) return false;
-              const j = await res.json().catch(() => ({}));
-              if (j.status) setStatus(j.status);
-              if (j.invoice?.paidTotal !== undefined) setPaidTotal(j.invoice.paidTotal);
-              return true;
-            }}
-          />
-          <Button size="sm" onClick={save} disabled={saving}>
-            {saving ? "Guardando…" : "Guardar"}
-          </Button>
+          </div>
         </div>
       </header>
 
       {/* Estado del pago al volver de Stripe */}
       {paymentBanner === "processing" && (
-        <div className="border-b border-sky-200 bg-sky-50 px-4 py-1.5 text-center text-xs text-sky-800">
-          ⏳ Pago recibido — confirmando con el banco… la descarga se desbloqueará en unos segundos.
+        <div className="shrink-0 border-b border-sky-200 bg-sky-50 px-3 py-1.5 text-center text-[11px] text-sky-800 sm:text-xs">
+          ⏳ Pago recibido — confirmando… la descarga se desbloqueará en unos segundos.
         </div>
       )}
       {paymentBanner === "paid" && (
-        <div className="border-b border-emerald-200 bg-emerald-50 px-4 py-1.5 text-center text-xs text-emerald-800">
+        <div className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-3 py-1.5 text-center text-[11px] text-emerald-800 sm:text-xs">
           ✅ ¡Pago confirmado! Ya puedes descargar tu sitio.
         </div>
       )}
       {paymentBanner === "cancelled" && (
-        <div className="border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-800">
-          El pago se canceló — puedes intentarlo de nuevo cuando quieras con el botón Pagar.
+        <div className="shrink-0 border-b border-amber-200 bg-amber-50 px-3 py-1.5 text-center text-[11px] text-amber-800 sm:text-xs">
+          El pago se canceló — puedes intentarlo de nuevo con Pagar.
         </div>
       )}
 
-      {/* Aviso: la URL es la llave de acceso */}
-      <div className="border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-800">
+      {/* Aviso: la URL es la llave de acceso (oculto en pantallas muy chicas) */}
+      <div className="hidden shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-800 sm:block">
         ⚠️ Este enlace es tu llave de acceso al sitio: <b>guárdalo</b> (márcalo como favorito o cópialo). Cualquiera con el enlace puede editarlo.
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      {/* Móvil: columna (editor arriba, preview abajo). Desktop: fila */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden md:flex-row">
         {/* Panel de edición */}
-        <aside className="flex w-[380px] shrink-0 flex-col border-r border-slate-200 bg-white">
-          <nav className="flex border-b border-slate-200 text-sm">
+        <aside className="flex min-h-0 w-full min-w-0 shrink-0 flex-col border-b border-slate-200 bg-white md:h-auto md:w-[min(380px,38vw)] md:shrink-0 md:border-b-0 md:border-r">
+          <nav className="flex shrink-0 border-b border-slate-200 text-sm">
             {(["secciones", "widgets", "negocio"] as const).map((t) => (
               <button
                 key={t}
+                type="button"
                 onClick={() => setTab(t)}
-                className={`flex-1 px-3 py-2.5 font-medium capitalize transition-colors ${
+                className={`flex-1 px-2 py-2.5 text-xs font-medium capitalize transition-colors sm:px-3 sm:text-sm ${
                   tab === t ? "border-b-2 border-brand-navy text-brand-navy" : "text-slate-500 hover:text-slate-800"
                 }`}
               >
@@ -377,14 +426,23 @@ export function BuilderClient({
             ))}
           </nav>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-3 sm:p-4">
+            {/* Factura compacta solo en móvil */}
+            <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-3 lg:hidden">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-semibold text-slate-800">Total</span>
+                <span className="text-lg font-bold text-brand-navy">{formatMoney(invoice.total)}</span>
+              </div>
+              <p className="mt-0.5 text-[10px] text-slate-400">MXN · se actualiza con cada cambio</p>
+            </div>
+
             {tab === "negocio" && <BusinessEditor config={config} update={update} />}
 
             {tab === "secciones" && (
-              <div className="space-y-3">
+              <div className="min-w-0 space-y-3">
                 <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
                   💡 Cada sección puede aparecer (o no) en el menú del header. <b>Consejo:</b> si agregas todas al menú
-                  puede verse demasiado lleno y perder elegancia — elige las 3 o 4 más importantes.
+                  puede verse demasiado lleno — elige las 3 o 4 más importantes.
                 </p>
                 {sorted.map((section, i) => (
                   <SectionEditor
@@ -403,7 +461,7 @@ export function BuilderClient({
             )}
 
             {tab === "widgets" && (
-              <div className="space-y-3">
+              <div className="min-w-0 space-y-3">
                 {catalog
                   .filter((w) => w.slug !== "seccion-extra" && w.slug !== "pagina-adicional")
                   .map((w) => {
@@ -411,14 +469,15 @@ export function BuilderClient({
                     return (
                       <div
                         key={w.slug}
-                        className={`rounded-xl border p-4 transition-colors ${active ? "border-brand-blue bg-brand-teal/10" : "border-slate-200"}`}
+                        className={`min-w-0 rounded-xl border p-3 transition-colors sm:p-4 ${active ? "border-brand-blue bg-brand-teal/10" : "border-slate-200"}`}
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
+                        <div className="flex items-start justify-between gap-2 sm:gap-3">
+                          <div className="min-w-0">
                             <p className="text-sm font-semibold text-slate-900">{w.name}</p>
                             <p className="mt-0.5 text-xs text-slate-500">{w.description}</p>
                           </div>
                           <button
+                            type="button"
                             role="switch"
                             aria-checked={active}
                             onClick={() => toggleWidget(w)}
@@ -444,15 +503,18 @@ export function BuilderClient({
           </div>
         </aside>
 
-        {/* Preview en vivo */}
-        <main className="min-w-0 flex-1 overflow-y-auto bg-slate-200 p-4">
-          {/* translateZ(0) hace que el botón fixed de WhatsApp quede contenido en el preview */}
-          <div className="mx-auto min-h-full max-w-5xl overflow-hidden rounded-xl shadow-2xl" style={{ transform: "translateZ(0)" }}>
+        {/* Preview en vivo — debajo en móvil, a la derecha en desktop */}
+        <main className="min-h-[45vh] min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-slate-200 p-2 sm:p-4 md:min-h-0">
+          <p className="mb-2 text-center text-[11px] font-medium text-slate-500 md:hidden">Vista previa en vivo</p>
+          <div
+            className="mx-auto min-h-full w-full max-w-5xl overflow-x-hidden overflow-hidden rounded-xl bg-white shadow-2xl"
+            style={{ transform: "translateZ(0)" }}
+          >
             <SiteRenderer config={config} templateConfig={templateConfig} />
           </div>
         </main>
 
-        {/* Factura en tiempo real */}
+        {/* Factura en tiempo real (solo desktop grande) */}
         <aside className="hidden w-[300px] shrink-0 flex-col border-l border-slate-200 bg-white lg:flex">
           <div className="border-b border-slate-200 px-4 py-3">
             <h2 className="text-sm font-semibold text-slate-900">🧾 Tu factura</h2>
@@ -485,8 +547,8 @@ export function BuilderClient({
 }
 
 /**
- * Pago con Stripe Checkout: guarda el pedido, crea la sesión y redirige
- * a la pasarela. Al regresar, el webhook marca PAID y desbloquea el .zip.
+ * Pago con Stripe Checkout: pide WhatsApp del cliente, guarda el pedido,
+ * crea la sesión y redirige a la pasarela.
  */
 function PayButton({
   siteKey,
@@ -494,6 +556,7 @@ function PayButton({
   total,
   paidTotal,
   status,
+  initialWhatsapp,
   prepareCheckout,
 }: {
   siteKey: string;
@@ -501,22 +564,39 @@ function PayButton({
   total: number;
   paidTotal: number;
   status: string;
-  /** Guarda config/factura en el servidor antes de abrir Stripe. */
-  prepareCheckout: () => Promise<boolean>;
+  initialWhatsapp?: string;
+  /** Guarda config (con WhatsApp) + factura antes de abrir Stripe. */
+  prepareCheckout: (customerWhatsapp: string) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [payError, setPayError] = useState("");
+  const [whatsapp, setWhatsapp] = useState(initialWhatsapp ?? "");
 
   const saldo = Math.max(0, total - paidTotal);
   const canPay =
     saldo > 0 && (status === "DRAFT" || status === "COMPLETED" || (status === "PAID" && paidTotal > 0 && total > paidTotal));
 
+  function normalizeWa(raw: string): string {
+    let d = raw.replace(/\D/g, "");
+    // 10 dígitos locales MX → 52 + número
+    if (d.length === 10) d = `52${d}`;
+    // 521 + 10 → 52 + 10
+    if (d.length === 13 && d.startsWith("521")) d = `52${d.slice(3)}`;
+    return d;
+  }
+
   async function goToStripe() {
     setLoading(true);
     setPayError("");
+    const wa = normalizeWa(whatsapp);
+    if (wa.length < 12) {
+      setPayError("Ingresa tu WhatsApp con código de país (ej. 529991234567 o 10 dígitos locales).");
+      setLoading(false);
+      return;
+    }
     try {
-      const prepared = await prepareCheckout();
+      const prepared = await prepareCheckout(wa);
       if (!prepared) {
         setPayError("No se pudo guardar tu pedido. Intenta de nuevo.");
         setLoading(false);
@@ -530,7 +610,8 @@ function PayButton({
       }
       if (checkout.status === 503) {
         setPayError(
-          "Los pagos en línea no están configurados todavía (falta la clave de Stripe en el servidor). Contacta al administrador."
+          data.error ||
+            "Los pagos en línea no están configurados todavía. Contacta al administrador."
         );
       } else if (checkout.status === 400) {
         setPayError(data.error || "No hay monto pendiente por pagar.");
@@ -549,14 +630,15 @@ function PayButton({
         type="button"
         onClick={() => {
           setPayError("");
+          setWhatsapp(initialWhatsapp ?? whatsapp);
           setOpen(true);
         }}
-        className="h-8 rounded-lg bg-emerald-600 px-3 text-sm font-medium text-white hover:bg-emerald-500 transition-colors"
+        className="h-9 min-h-9 shrink-0 rounded-lg bg-emerald-600 px-3 text-xs font-medium text-white transition-colors hover:bg-emerald-500 sm:h-8 sm:text-sm"
       >
         {status === "PAID" && saldo <= 0
-          ? "Ver mi pedido"
+          ? "Pedido"
           : saldo > 0 && paidTotal > 0
-            ? "Pagar saldo"
+            ? "Saldo"
             : "Pagar"}
       </button>
       {open && (
@@ -593,10 +675,23 @@ function PayButton({
 
             {canPay ? (
               <>
-                <p className="mt-4 rounded-lg bg-emerald-50 p-3 text-xs text-emerald-800">
+                <div className="mt-4 space-y-1.5">
+                  <Label>Tu WhatsApp (obligatorio)</Label>
+                  <Input
+                    type="tel"
+                    inputMode="tel"
+                    placeholder="529991234567 o 9991234567"
+                    value={whatsapp}
+                    onChange={(e) => setWhatsapp(e.target.value)}
+                    disabled={loading}
+                  />
+                  <p className="text-[11px] text-slate-500">
+                    Te enviaremos la confirmación del pago a este número. Usa código de país <b>52</b> (México) + 10 dígitos.
+                  </p>
+                </div>
+                <p className="mt-3 rounded-lg bg-emerald-50 p-3 text-xs text-emerald-800">
                   Al continuar serás redirigido a la <b>pasarela de pago segura (Stripe)</b> para pagar{" "}
-                  <b>{formatMoney(saldo)}</b> con tarjeta u otros métodos habilitados. Al terminar el pago podrás
-                  descargar el .zip de tu sitio.
+                  <b>{formatMoney(saldo)}</b>. Al terminar podrás descargar el .zip de tu sitio.
                 </p>
                 {payError && (
                   <p className="mt-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{payError}</p>
@@ -605,7 +700,7 @@ function PayButton({
                   <Button variant="outline" className="flex-1" onClick={() => setOpen(false)} disabled={loading}>
                     Cancelar
                   </Button>
-                  <Button className="flex-1" onClick={goToStripe} disabled={loading}>
+                  <Button className="flex-1" onClick={goToStripe} disabled={loading || !whatsapp.trim()}>
                     {loading ? "Abriendo pago…" : `Ir a pagar ${formatMoney(saldo)}`}
                   </Button>
                 </div>
