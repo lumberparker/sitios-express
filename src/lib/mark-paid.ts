@@ -1,8 +1,9 @@
 import { prisma } from "@/lib/prisma";
+import { notifyOrderPaid } from "@/lib/whatsapp/notify-order";
 
 /**
  * Marca un sitio como pagado (status PAID + invoice PAID).
- * Idempotente: si ya está PAID, solo asegura paidTotal.
+ * Idempotente: si ya estaba PAID, no vuelve a notificar.
  */
 export async function markSitePaid(siteId: string, paidAmountMxn?: number): Promise<boolean> {
   const site = await prisma.site.findUnique({
@@ -13,6 +14,8 @@ export async function markSitePaid(siteId: string, paidAmountMxn?: number): Prom
     console.error(`[markSitePaid] sitio ${siteId} sin factura`);
     return false;
   }
+
+  const alreadyPaid = site.status === "PAID" && site.invoice.status === "PAID";
 
   const paidTotal = Math.max(
     paidAmountMxn ?? site.invoice.total,
@@ -34,5 +37,11 @@ export async function markSitePaid(siteId: string, paidAmountMxn?: number): Prom
   });
 
   console.log(`[markSitePaid] sitio ${siteId} → PAID (paidTotal=${paidTotal})`);
+
+  // Resumen del pedido por WhatsApp (solo la primera vez que queda pagado)
+  if (!alreadyPaid) {
+    void notifyOrderPaid(siteId);
+  }
+
   return true;
 }

@@ -11,10 +11,6 @@ export default async function BuilderPage({ params }: { params: { key: string } 
 
   const widgets = await prisma.widget.findMany({ where: { active: true }, orderBy: { price: "asc" } });
 
-  // Número de soporte para el botón de WhatsApp post-pago de montaje
-  const supportWhatsapp = (process.env.SUPPORT_WHATSAPP || process.env.NEXT_PUBLIC_SUPPORT_WHATSAPP || "")
-    .replace(/\D/g, "");
-
   return (
     <BuilderClient
       siteKey={site.editKey}
@@ -23,7 +19,6 @@ export default async function BuilderPage({ params }: { params: { key: string } 
       initialConfig={SiteConfigSchema.parse(site.config)}
       templateConfig={TemplateConfigSchema.parse(site.template.config)}
       template={{ name: site.template.name, basePrice: site.template.basePrice }}
-      supportWhatsapp={supportWhatsapp}
       catalog={widgets.map((w) => ({
         slug: w.slug,
         name: w.name,

@@ -96,7 +96,7 @@ const widgets = [
   { slug: "pagina-adicional", name: "Página adicional", description: "Páginas completas extra (ej. Nosotros o Contacto dedicada). Precio por página; tú defines qué lleva cada una.", sectionType: null, icon: "file-plus", price: 400 },
   // Descartado por ahora (2026-07-09): se conserva inactivo por si se retoma
   { slug: "multi-idioma", name: "Multi-idioma", description: "Tu sitio en español e inglés con selector de idioma.", sectionType: null, icon: "globe", price: 600, active: false },
-  { slug: "montaje-sin-dominio", name: "Montaje en línea (sin dominio)", description: "Publicamos tu sitio en internet con una dirección nuestra (tu-negocio.sitiosexpress.mx).", sectionType: null, icon: "cloud", price: 300 },
+  { slug: "montaje-sin-dominio", name: "Montaje en línea (sin dominio)", description: "Publicamos tu sitio en internet con una dirección en Netlify (tu-negocio.netlify.app).", sectionType: null, icon: "cloud", price: 300 },
   { slug: "montaje-con-dominio", name: "Montaje con dominio propio", description: "Publicamos tu sitio con tu propio dominio (.com, .mx…). El costo del dominio se cotiza aparte según disponibilidad.", sectionType: null, icon: "globe", price: 800 },
 ];
 
