@@ -33,9 +33,25 @@ export default async function SuperAdminPage() {
         const montajeSinDominio = widgetIds.has("montaje-sin-dominio");
         const montaje = montajeConDominio || montajeSinDominio;
         const waPhone = phoneBySite.get(s.id);
+        const clientWhatsapp = String(config?.whatsapp?.number || config?.business?.phone || "").replace(/\D/g, "");
         const contact = waPhone
           ? `WhatsApp ${waPhone}`
-          : config?.business?.email || config?.whatsapp?.number || "Web (sin contacto)";
+          : config?.whatsapp?.number || config?.business?.email || "Web (sin contacto)";
+        // Prefill URL si el cliente pidió Netlify con subdominio
+        const montajeWidget = (Array.isArray(config?.widgets) ? config.widgets : []).find(
+          (w: any) => w?.widgetId === "montaje-sin-dominio" || w?.widgetId === "montaje-con-dominio"
+        );
+        const sub = String(montajeWidget?.config?.subdomain ?? "").trim();
+        const desiredDomain = String(montajeWidget?.config?.desiredDomain ?? "").trim();
+        const suggestedUrl = montajeConDominio
+          ? desiredDomain
+            ? desiredDomain.startsWith("http")
+              ? desiredDomain
+              : `https://${desiredDomain}`
+            : ""
+          : sub
+            ? `https://${sub}.netlify.app`
+            : "";
         return {
           id: s.id,
           editKey: s.editKey,
@@ -48,6 +64,8 @@ export default async function SuperAdminPage() {
           updatedAt: s.updatedAt.toLocaleDateString("es-MX"),
           montaje,
           conDominio: montajeConDominio,
+          clientWhatsapp,
+          suggestedUrl,
         };
       })}
     />
