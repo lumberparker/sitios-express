@@ -55,6 +55,8 @@ export function BuilderClient({
   const [tab, setTab] = useState<"secciones" | "widgets" | "negocio">("secciones");
   /** "home" = página de inicio; id de ExtraPage = subpágina. */
   const [editingPageId, setEditingPageId] = useState<string>("home");
+  /** En móvil: alternar panel de edición vs vista previa */
+  const [mobilePane, setMobilePane] = useState<"edit" | "preview">("edit");
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [error, setError] = useState("");
@@ -270,58 +272,106 @@ export function BuilderClient({
   const sorted = [...activeSections].sort((a, b) => a.order - b.order);
 
   return (
-    <div className="app-surface flex h-screen flex-col bg-slate-100">
-      {/* Barra superior */}
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-2.5">
-        <div className="flex items-center gap-3">
-          <span className="font-semibold text-slate-900">{config.business.name}</span>
-          <Badge tone="indigo">{template.name}</Badge>
-          {status === "COMPLETED" && <Badge tone="slate">Pedido registrado</Badge>}
-          {status === "PAID" && <Badge tone="green">Pagado</Badge>}
-        </div>
-        <div className="flex items-center gap-2">
-          {savedAt && !saving && <span className="text-xs text-slate-400">Guardado {savedAt.toLocaleTimeString()}</span>}
-          {error && <span className="text-xs text-rose-600">{error}</span>}
-          <Button variant="ghost" size="sm" onClick={copyLink}>
-            {linkCopied ? "✓ Copiado" : "🔗 Copiar mi enlace"}
-          </Button>
-          <Link href={`/preview/${siteKey}`} target="_blank">
-            <Button variant="outline" size="sm">
-              Vista previa ↗
+    <div className="app-surface flex h-[100dvh] flex-col bg-slate-100">
+      {/* Barra superior — apilada en móvil */}
+      <header className="shrink-0 border-b border-slate-200 bg-white px-3 py-2 sm:px-4 sm:py-2.5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-sm font-semibold text-slate-900 sm:text-base">{config.business.name}</span>
+            <Badge tone="indigo" className="hidden shrink-0 sm:inline-flex">
+              {template.name}
+            </Badge>
+            {status === "COMPLETED" && (
+              <Badge tone="slate" className="hidden shrink-0 md:inline-flex">
+                Pedido registrado
+              </Badge>
+            )}
+            {status === "PAID" && (
+              <Badge tone="green" className="hidden shrink-0 md:inline-flex">
+                Pagado
+              </Badge>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+            {savedAt && !saving && (
+              <span className="order-last w-full text-[11px] text-slate-400 sm:order-none sm:w-auto sm:text-xs">
+                Guardado {savedAt.toLocaleTimeString()}
+              </span>
+            )}
+            {error && <span className="text-[11px] text-rose-600 sm:text-xs">{error}</span>}
+            <Button variant="ghost" size="sm" onClick={copyLink} className="min-h-9 px-2.5 text-xs sm:min-h-8 sm:text-sm">
+              <span className="sm:hidden">{linkCopied ? "✓" : "🔗"}</span>
+              <span className="hidden sm:inline">{linkCopied ? "✓ Copiado" : "🔗 Enlace"}</span>
             </Button>
-          </Link>
-          {status === "PAID" ? (
-            <a href={`/api/sites/${siteKey}/export`}>
-              <Button variant="secondary" size="sm">
-                Descargar .zip
+            <Link href={`/preview/${siteKey}`} target="_blank" className="hidden sm:inline-flex">
+              <Button variant="outline" size="sm">
+                Vista ↗
               </Button>
-            </a>
-          ) : (
-            <Button variant="secondary" size="sm" disabled title="La descarga del código se habilita cuando tu pago esté confirmado">
-              🔒 Descargar .zip
+            </Link>
+            {status === "PAID" ? (
+              <a href={`/api/sites/${siteKey}/export`} className="hidden sm:inline-flex">
+                <Button variant="secondary" size="sm">
+                  .zip
+                </Button>
+              </a>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled
+                title="La descarga del código se habilita cuando tu pago esté confirmado"
+                className="hidden sm:inline-flex"
+              >
+                🔒 .zip
+              </Button>
+            )}
+            <PayButton siteKey={siteKey} lineItems={invoice.lineItems} total={invoice.total} status={status} onPaid={() => setStatus("COMPLETED")} />
+            <Button size="sm" onClick={save} disabled={saving} className="min-h-9 flex-1 px-3 text-xs sm:min-h-8 sm:flex-none sm:text-sm">
+              {saving ? "…" : "Guardar"}
             </Button>
-          )}
-          <PayButton siteKey={siteKey} lineItems={invoice.lineItems} total={invoice.total} status={status} onPaid={() => setStatus("COMPLETED")} />
-          <Button size="sm" onClick={save} disabled={saving}>
-            {saving ? "Guardando…" : "Guardar"}
-          </Button>
+          </div>
+        </div>
+        {/* Toggle editar / vista en móvil */}
+        <div className="mt-2 flex rounded-lg bg-slate-100 p-0.5 md:hidden">
+          <button
+            type="button"
+            onClick={() => setMobilePane("edit")}
+            className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${
+              mobilePane === "edit" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+            }`}
+          >
+            Editar
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobilePane("preview")}
+            className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${
+              mobilePane === "preview" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+            }`}
+          >
+            Vista previa
+          </button>
         </div>
       </header>
 
       {/* Aviso: la URL es la llave de acceso */}
-      <div className="border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-800">
+      <div className="hidden border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-800 sm:block">
         ⚠️ Este enlace es tu llave de acceso al sitio: <b>guárdalo</b> (márcalo como favorito o cópialo). Cualquiera con el enlace puede editarlo.
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* Panel de edición */}
-        <aside className="flex w-[380px] shrink-0 flex-col border-r border-slate-200 bg-white">
-          <nav className="flex border-b border-slate-200 text-sm">
+        <aside
+          className={`flex min-h-0 w-full shrink-0 flex-col border-r border-slate-200 bg-white md:w-[380px] ${
+            mobilePane === "edit" ? "flex flex-1 md:flex-none md:h-auto" : "hidden md:flex"
+          }`}
+        >
+          <nav className="flex shrink-0 border-b border-slate-200 text-sm">
             {(["secciones", "widgets", "negocio"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
-                className={`flex-1 px-3 py-2.5 font-medium capitalize transition-colors ${
+                className={`flex-1 px-2 py-2.5 text-xs font-medium capitalize transition-colors sm:px-3 sm:text-sm ${
                   tab === t ? "border-b-2 border-brand-navy text-brand-navy" : "text-slate-500 hover:text-slate-800"
                 }`}
               >
@@ -464,9 +514,16 @@ export function BuilderClient({
         </aside>
 
         {/* Preview en vivo */}
-        <main className="min-w-0 flex-1 overflow-y-auto bg-slate-200 p-4">
+        <main
+          className={`min-h-0 min-w-0 flex-1 overflow-y-auto bg-slate-200 p-2 sm:p-4 ${
+            mobilePane === "preview" ? "flex" : "hidden md:block"
+          }`}
+        >
           {/* translateZ(0) hace que el botón fixed de WhatsApp quede contenido en el preview */}
-          <div className="mx-auto min-h-full max-w-5xl overflow-hidden rounded-xl shadow-2xl" style={{ transform: "translateZ(0)" }}>
+          <div
+            className="mx-auto min-h-full w-full max-w-5xl overflow-hidden rounded-xl bg-white shadow-2xl"
+            style={{ transform: "translateZ(0)" }}
+          >
             <SiteRenderer
               config={config}
               templateConfig={templateConfig}

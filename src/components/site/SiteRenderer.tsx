@@ -177,42 +177,78 @@ export function SiteRenderer({
             ))}
           </nav>
           <button
-            aria-label="Abrir menú"
-            className="flex h-10 w-10 flex-col items-center justify-center gap-1.5 md:hidden"
+            type="button"
+            aria-label={menuOpen ? "Cerrar menú" : "Abrir menú"}
+            aria-expanded={menuOpen}
+            className="relative h-11 w-11 shrink-0 rounded-lg md:hidden"
+            style={{ border: `1px solid ${tpl.palette.text}22` }}
             onClick={() => setMenuOpen((v) => !v)}
           >
-            <span className="h-0.5 w-6 transition-transform" style={{ background: tpl.palette.text, transform: menuOpen ? "translateY(4px) rotate(45deg)" : "none" }} />
-            <span className="h-0.5 w-6 transition-opacity" style={{ background: tpl.palette.text, opacity: menuOpen ? 0 : 1 }} />
-            <span className="h-0.5 w-6 transition-transform" style={{ background: tpl.palette.text, transform: menuOpen ? "translateY(-4px) rotate(-45deg)" : "none" }} />
+            {/* Icono hamburguesa → X (líneas centradas; no se deforma al abrir) */}
+            <span
+              className="pointer-events-none absolute left-1/2 top-1/2 block h-0.5 w-5 rounded-full transition-all duration-300 ease-out"
+              style={{
+                background: tpl.palette.text,
+                transform: menuOpen ? "translate(-50%, -50%) rotate(45deg)" : "translate(-50%, calc(-50% - 7px))",
+              }}
+            />
+            <span
+              className="pointer-events-none absolute left-1/2 top-1/2 block h-0.5 w-5 rounded-full transition-all duration-300 ease-out"
+              style={{
+                background: tpl.palette.text,
+                opacity: menuOpen ? 0 : 1,
+                transform: "translate(-50%, -50%)",
+              }}
+            />
+            <span
+              className="pointer-events-none absolute left-1/2 top-1/2 block h-0.5 w-5 rounded-full transition-all duration-300 ease-out"
+              style={{
+                background: tpl.palette.text,
+                transform: menuOpen ? "translate(-50%, -50%) rotate(-45deg)" : "translate(-50%, calc(-50% + 7px))",
+              }}
+            />
           </button>
         </div>
         <motion.nav
           initial={false}
           animate={{ height: menuOpen ? "auto" : 0 }}
           className="overflow-hidden md:hidden"
-          style={{ background: tpl.palette.surface }}
+          style={{ background: tpl.palette.surface, borderTop: menuOpen ? `1px solid ${tpl.palette.text}12` : undefined }}
         >
-          {isHome &&
-            menuSections.map((s) => (
-              <a key={s.id} href={`#${s.id}`} className="block px-6 py-3 text-sm font-medium" onClick={() => setMenuOpen(false)}>
-                {(s.content.title as string) || SECTION_LABELS[s.type]}
-              </a>
+          <div className="px-2 py-2">
+            {isHome &&
+              menuSections.map((s) => (
+                <a
+                  key={s.id}
+                  href={`#${s.id}`}
+                  className="block rounded-lg px-4 py-3 text-sm font-medium transition-colors hover:bg-black/5"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  {(s.content.title as string) || SECTION_LABELS[s.type]}
+                </a>
+              ))}
+            {!isHome && (
+              <button
+                type="button"
+                className="block w-full rounded-lg px-4 py-3 text-left text-sm font-medium transition-colors hover:bg-black/5"
+                onClick={() => goToPage("home")}
+              >
+                Inicio
+              </button>
+            )}
+            {extraPages.map((p, i) => (
+              <button
+                key={p.id}
+                type="button"
+                className={`block w-full rounded-lg px-4 py-3 text-left text-sm font-medium transition-colors hover:bg-black/5 ${
+                  activePageId === p.id ? "font-semibold opacity-100" : "opacity-90"
+                }`}
+                onClick={() => goToPage(p.id)}
+              >
+                {p.title.trim() || `Página ${i + 1}`}
+              </button>
             ))}
-          {!isHome && (
-            <button type="button" className="block w-full px-6 py-3 text-left text-sm font-medium" onClick={() => goToPage("home")}>
-              Inicio
-            </button>
-          )}
-          {extraPages.map((p, i) => (
-            <button
-              key={p.id}
-              type="button"
-              className="block w-full px-6 py-3 text-left text-sm font-medium"
-              onClick={() => goToPage(p.id)}
-            >
-              {p.title.trim() || `Página ${i + 1}`}
-            </button>
-          ))}
+          </div>
         </motion.nav>
       </header>
 
