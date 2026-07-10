@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Button, Input, Label, Textarea, Badge } from "@/components/ui";
 import { SiteRenderer } from "@/components/site/SiteRenderer";
@@ -50,6 +50,39 @@ export function BuilderClient({
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [error, setError] = useState("");
   const [linkCopied, setLinkCopied] = useState(false);
+  const [paymentBanner, setPaymentBanner] = useState<"" | "processing" | "paid" | "cancelled">("");
+
+  // Al volver de Stripe (?pago=exitoso) el webhook confirma el pago en
+  // segundos: se muestra un aviso y se consulta el estado hasta verlo PAID.
+  useEffect(() => {
+    const result = new URLSearchParams(window.location.search).get("pago");
+    if (!result) return;
+    window.history.replaceState(null, "", window.location.pathname);
+    if (result === "cancelado") {
+      setPaymentBanner("cancelled");
+      return;
+    }
+    if (result !== "exitoso") return;
+    setPaymentBanner("processing");
+    let tries = 0;
+    const timer = setInterval(async () => {
+      tries += 1;
+      const res = await fetch(`/api/sites/${siteKey}`).catch(() => null);
+      if (res?.ok) {
+        const site = await res.json();
+        if (site.status === "PAID") {
+          setStatus("PAID");
+          setPaidTotal(site.invoice?.paidTotal ?? 0);
+          setPaymentBanner("paid");
+          clearInterval(timer);
+          return;
+        }
+      }
+      if (tries >= 15) clearInterval(timer);
+    }, 3000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const invoice = useMemo(
     () => computeInvoice(config, template, catalog as any),
@@ -216,6 +249,23 @@ export function BuilderClient({
         </div>
       </header>
 
+      {/* Estado del pago al volver de Stripe */}
+      {paymentBanner === "processing" && (
+        <div className="border-b border-sky-200 bg-sky-50 px-4 py-1.5 text-center text-xs text-sky-800">
+          ⏳ Pago recibido — confirmando con el banco… la descarga se desbloqueará en unos segundos.
+        </div>
+      )}
+      {paymentBanner === "paid" && (
+        <div className="border-b border-emerald-200 bg-emerald-50 px-4 py-1.5 text-center text-xs text-emerald-800">
+          ✅ ¡Pago confirmado! Ya puedes descargar tu sitio.
+        </div>
+      )}
+      {paymentBanner === "cancelled" && (
+        <div className="border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-800">
+          El pago se canceló — puedes intentarlo de nuevo cuando quieras con el botón Pagar.
+        </div>
+      )}
+
       {/* Aviso: la URL es la llave de acceso */}
       <div className="border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-800">
         ⚠️ Este enlace es tu llave de acceso al sitio: <b>guárdalo</b> (márcalo como favorito o cópialo). Cualquiera con el enlace puede editarlo.
@@ -375,6 +425,14 @@ function PayButton({
 
   async function confirm() {
     setLoading(true);
+    // Con Stripe configurado: redirección a la página de pago
+    const checkout = await fetch(`/api/sites/${siteKey}/checkout`, { method: "POST" });
+    if (checkout.ok) {
+      const { url } = await checkout.json();
+      window.location.href = url;
+      return;
+    }
+    // Fallback (Stripe no disponible): registrar la solicitud para cobro manual
     await fetch(`/api/sites/${siteKey}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
