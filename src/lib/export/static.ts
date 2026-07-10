@@ -4,8 +4,15 @@
 // Las imágenes subidas (/uploads/...) se reescriben a assets/ y el endpoint
 // de export las incluye en el .zip.
 
-import type { SiteConfig, Section, TemplateConfig } from "@/lib/site-config";
-import { SECTION_LABELS, effectiveFonts, resolveCtaLink } from "@/lib/site-config";
+import type { SiteConfig, Section, TemplateConfig, ExtraPage as ConfigExtraPage } from "@/lib/site-config";
+import {
+  SECTION_LABELS,
+  effectiveFonts,
+  getExtraPages,
+  normalizeIframeSrc,
+  normalizeMapEmbedUrl,
+  resolveCtaLink,
+} from "@/lib/site-config";
 
 const ROUNDED: Record<string, string> = { none: "0", md: "10px", xl: "20px", full: "32px" };
 
@@ -50,16 +57,14 @@ export function collectUploads(config: SiteConfig): string[] {
   return [...urls];
 }
 
-type ExtraPage = { title: string; content: string; file: string };
+type ExtraPageExport = ConfigExtraPage & { file: string };
 
-function extraPages(config: SiteConfig): ExtraPage[] {
-  const entry = config.widgets.find((w) => w.widgetId === "pagina-adicional");
-  const pages: { title: string; content: string }[] = (entry?.config as any)?.pages ?? [];
-  return pages
-    .filter((p) => p.title || p.content)
+function extraPages(config: SiteConfig): ExtraPageExport[] {
+  return getExtraPages(config)
+    .filter((p) => p.title || p.content || p.sections.length > 0)
     .map((p, i) => ({
+      ...p,
       title: p.title || `Página ${i + 1}`,
-      content: p.content || "",
       file: `${slugify(p.title || `pagina-${i + 1}`)}.html`,
     }));
 }
@@ -83,7 +88,12 @@ function bgStyle(section: Section, tpl: TemplateConfig, index: number): string {
 
 function cardVars(section: Section): string {
   const c = section.style.card;
-  return `--card-radius:${ROUNDED[c.rounded]};--card-shadow:${c.shadow ? "0 12px 32px rgba(0,0,0,.12)" : "none"};--card-border:${
+  // Productos: content.radius (px) tiene prioridad sobre el preset de estilo
+  const radius =
+    section.type === "products" && section.content.radius != null && section.content.radius !== ""
+      ? `${Number(section.content.radius)}px`
+      : ROUNDED[c.rounded];
+  return `--card-radius:${radius};--card-shadow:${c.shadow ? "0 12px 32px rgba(0,0,0,.12)" : "none"};--card-border:${
     c.border ? "1px solid color-mix(in srgb, var(--accent) 25%, transparent)" : "none"
   };${section.style.accentColor ? `--accent:${section.style.accentColor};` : ""}`;
 }
@@ -115,6 +125,31 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
     ${c.imageUrl ? `<img class="about__image reveal" src="${assetPath(c.imageUrl)}" alt="${esc(c.title)}">` : ""}
   </div>
 </section>`;
+
+    case "custom": {
+      const layout = c.layout ?? "text";
+      const withImage = layout === "text-image" || layout === "image-text";
+      const imageFirst = layout === "image-text";
+      const textHtml = `<div class="about__text reveal${layout === "centered" ? " about__text--center" : ""}">
+      <h2 class="section__title">${esc(c.title)}</h2><div class="section__rule"></div>
+      <p class="about__prose">${esc(c.text)}</p>
+    </div>`;
+      const imgHtml = c.imageUrl
+        ? `<img class="about__image reveal" src="${assetPath(c.imageUrl)}" alt="${esc(c.title)}">`
+        : "";
+      if (withImage) {
+        return `<section ${attrs} class="about custom">
+  <div class="container about__grid">
+    ${imageFirst ? `${imgHtml}\n    ${textHtml}` : `${textHtml}\n    ${imgHtml}`}
+  </div>
+</section>`;
+      }
+      return `<section ${attrs} class="custom">
+  <div class="container container--narrow">
+    ${textHtml}
+  </div>
+</section>`;
+    }
 
     case "products":
       return `<section ${attrs} class="products">
@@ -224,14 +259,32 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
 </section>`;
     }
 
-    case "map":
+    case "iframe": {
+      const src = normalizeIframeSrc(c.url);
+      const height = Math.min(900, Math.max(200, Number(c.height) || 480));
+      const narrow = c.width === "narrow";
+      return `<section ${attrs} class="iframe-section">
+  <div class="container${narrow ? " container--narrow" : ""}">
+    ${c.title ? `<h2 class="section__title section__title--center reveal">${esc(c.title)}</h2>` : ""}
+    ${
+      src
+        ? `<iframe class="iframe-section__frame reveal" src="${esc(src)}" title="${esc(c.title || "Contenido embebido")}" style="height:${height}px" loading="lazy" referrerpolicy="no-referrer-when-downgrade" allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>`
+        : ""
+    }
+  </div>
+</section>`;
+    }
+
+    case "map": {
+      const mapSrc = normalizeMapEmbedUrl(c.embedUrl) || normalizeMapEmbedUrl(c.address);
       return `<section ${attrs} class="map">
   <div class="container container--center">
     <h2 class="section__title reveal">${esc(c.title)}</h2>
     ${c.address ? `<p class="section__lead">${esc(c.address)}</p>` : ""}
-    ${c.embedUrl ? `<iframe class="map__frame reveal" src="${esc(c.embedUrl)}" loading="lazy" title="Mapa"></iframe>` : ""}
+    ${mapSrc ? `<iframe class="map__frame reveal" src="${esc(mapSrc)}" loading="lazy" referrerpolicy="no-referrer-when-downgrade" allowfullscreen title="Mapa"></iframe>` : ""}
   </div>
 </section>`;
+    }
 
     case "faq":
       return `<section ${attrs} class="faq">
@@ -285,13 +338,15 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
   }
 }
 
-function headerHtml(config: SiteConfig, sections: Section[], pages: ExtraPage[], onSubpage: boolean): string {
-  const prefix = onSubpage ? "index.html" : "";
+function headerHtml(config: SiteConfig, sections: Section[], pages: ExtraPageExport[], onSubpage: boolean): string {
   const navLinks = [
-    ...sections.filter((s) => s.inMenu).map((s) => ({
-      href: `${prefix}#${s.id}`,
-      label: (s.content.title as string) || SECTION_LABELS[s.type],
-    })),
+    // En subpáginas, un enlace "Inicio" en lugar de anclas de la home
+    ...(onSubpage
+      ? [{ href: "index.html", label: "Inicio" }]
+      : sections.filter((s) => s.inMenu).map((s) => ({
+          href: `#${s.id}`,
+          label: (s.content.title as string) || SECTION_LABELS[s.type],
+        }))),
     ...pages.map((p) => ({ href: p.file, label: p.title })),
   ];
   const links = () => navLinks.map((l) => `<a class="nav__link" href="${esc(l.href)}">${esc(l.label)}</a>`).join(`\n        `);
@@ -386,16 +441,23 @@ ${sections.map((s, i) => renderSection(s, tpl, i, config)).join("\n\n")}
     "index.html": htmlShell(config, tpl, config.business.name, indexBody),
   };
 
-  // Páginas adicionales (widget "pagina-adicional")
+  // Páginas adicionales (widget "pagina-adicional"): título + intro + secciones
   for (const page of pages) {
-    const body = `  ${headerHtml(config, sections, pages, true)}
-
-<section class="page">
+    const pageSections = [...page.sections].sort((a, b) => a.order - b.order);
+    const intro =
+      page.title || page.content
+        ? `<section class="page">
   <div class="container container--narrow">
     <h1 class="page__title reveal">${esc(page.title)}</h1>
-    <div class="page__content reveal">${esc(page.content).replace(/\n/g, "<br>")}</div>
+    ${page.content ? `<div class="page__content reveal">${esc(page.content).replace(/\n/g, "<br>")}</div>` : ""}
   </div>
-</section>
+</section>`
+        : "";
+    const body = `  ${headerHtml(config, sections, pages, true)}
+
+${intro}
+
+${pageSections.map((s, i) => renderSection(s, tpl, i, config)).join("\n\n")}
 
   ${footerHtml(config)}
 
@@ -537,6 +599,9 @@ section { padding: 6rem 0; }
 
 /* Bloque: map */
 .map__frame { width: 100%; height: 380px; border: 0; border-radius: 20px; margin-top: 2rem; }
+/* Bloque: iframe genérico */
+.iframe-section { padding: 4rem 0; }
+.iframe-section__frame { width: 100%; border: 0; border-radius: 16px; margin-top: 1.5rem; background: rgba(0,0,0,.04); display: block; }
 
 /* Bloque: faq */
 .faq__item { margin-top: 1rem; }
@@ -559,8 +624,11 @@ section { padding: 6rem 0; }
 
 /* Bloque: page (páginas adicionales) */
 .page { min-height: 55vh; }
-.page__title { font-size: clamp(2rem, 5vw, 3.2rem); }
-.page__content { margin-top: 1.6rem; opacity: .88; }
+.page__title { font-size: clamp(2rem, 5vw, 3.2rem); text-align: center; }
+.page__content { margin-top: 1.6rem; opacity: .88; text-align: center; max-width: 42rem; margin-left: auto; margin-right: auto; }
+.about__text--center { text-align: center; }
+.about__text--center .section__rule { margin-left: auto; margin-right: auto; }
+.about__text--center .about__prose { max-width: 42rem; margin-left: auto; margin-right: auto; }
 
 /* Bloque: footer */
 .footer { background: color-mix(in srgb, var(--text) 92%, black); color: var(--bg); font-size: .9rem; }

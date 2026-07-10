@@ -38,6 +38,10 @@ export const SectionTypeSchema = z.enum([
   "faq",
   "contact",
   "quote",
+  // Bloque libre: título + texto + imagen opcional (secciones personalizadas)
+  "custom",
+  // Embed genérico: el usuario pega una URL (o HTML de iframe) y se muestra embebido
+  "iframe",
 ]);
 export type SectionType = z.infer<typeof SectionTypeSchema>;
 
@@ -138,7 +142,183 @@ export const SECTION_LABELS: Record<SectionType, string> = {
   faq: "Preguntas frecuentes",
   contact: "Formulario de contacto",
   quote: "Calculadora de cotización",
+  custom: "Personalizada",
+  iframe: "Iframe / Embed",
 };
+
+/** Secciones que se pueden repetir en la misma página. */
+export const REPEATABLE_SECTIONS = new Set<SectionType>(["custom", "iframe"]);
+
+/** Página extra (widget pagina-adicional): título + secciones propias + texto libre opcional. */
+export type ExtraPage = {
+  id: string;
+  title: string;
+  /** Texto libre introductorio (compat con páginas viejas solo-texto). */
+  content: string;
+  sections: Section[];
+};
+
+export function pageId() {
+  return sectionId("page");
+}
+
+/** Normaliza páginas del widget (formato viejo {title,content} o nuevo con sections). */
+export function normalizeExtraPages(raw: unknown): ExtraPage[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((p: any, i: number) => {
+    const sections: Section[] = Array.isArray(p?.sections)
+      ? p.sections.map((s: unknown, j: number) => {
+          try {
+            return SectionSchema.parse(s);
+          } catch {
+            return makeSection("custom", j + 1);
+          }
+        })
+      : [];
+    return {
+      // id estable: si falta (páginas viejas), page_0, page_1… hasta que se guarde
+      id: typeof p?.id === "string" && p.id ? p.id : `page_${i}`,
+      title: String(p?.title ?? ""),
+      content: String(p?.content ?? ""),
+      sections,
+    };
+  });
+}
+
+export function getExtraPages(config: SiteConfig): ExtraPage[] {
+  const entry = config.widgets.find((w) => w.widgetId === "pagina-adicional");
+  return normalizeExtraPages(entry?.config?.pages);
+}
+
+/** Todas las secciones del sitio (inicio + páginas extra), para facturación y limpieza. */
+export function allSiteSections(config: SiteConfig): Section[] {
+  return [...config.sections, ...getExtraPages(config).flatMap((p) => p.sections)];
+}
+
+/**
+ * Normaliza lo que el usuario pegue en una sección iframe:
+ * URL directa, o HTML `<iframe src="...">` completo.
+ * También convierte YouTube/Vimeo watch → embed cuando es posible.
+ */
+export function normalizeIframeSrc(raw: string | undefined | null): string {
+  const input = String(raw ?? "").trim();
+  if (!input) return "";
+
+  // Pegaron el HTML del iframe
+  const iframeSrc = input.match(/src=["']([^"']+)["']/i)?.[1];
+  let url = (iframeSrc || input).trim().replace(/&amp;/g, "&");
+
+  // Protocolo relativo //example.com → https:
+  if (url.startsWith("//")) url = `https:${url}`;
+
+  // Sin protocolo: asumir https
+  if (!/^https?:\/\//i.test(url) && !url.startsWith("about:")) {
+    url = `https://${url}`;
+  }
+
+  try {
+    const u = new URL(url);
+
+    // YouTube: watch?v= / youtu.be / shorts → embed
+    if (/(?:www\.)?youtube\.com$/i.test(u.hostname) || /(?:www\.)?youtube-nocookie\.com$/i.test(u.hostname)) {
+      const v = u.searchParams.get("v");
+      if (v) return `https://www.youtube.com/embed/${v}`;
+      const shorts = u.pathname.match(/\/shorts\/([\w-]+)/);
+      if (shorts) return `https://www.youtube.com/embed/${shorts[1]}`;
+      const embed = u.pathname.match(/\/embed\/([\w-]+)/);
+      if (embed) return `https://www.youtube.com/embed/${embed[1]}${u.search}`;
+    }
+    if (/^(?:www\.)?youtu\.be$/i.test(u.hostname)) {
+      const id = u.pathname.replace(/^\//, "").split("/")[0];
+      if (id) return `https://www.youtube.com/embed/${id}`;
+    }
+
+    // Vimeo
+    if (/(?:www\.)?vimeo\.com$/i.test(u.hostname)) {
+      const id = u.pathname.match(/\/(\d+)/)?.[1];
+      if (id && !u.pathname.includes("/video/")) return `https://player.vimeo.com/video/${id}`;
+    }
+
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Convierte lo que el usuario pegue (enlace de Maps, share, o HTML de iframe)
+ * en una URL válida para <iframe src>. Los links normales de Google Maps
+ * no se pueden embeber tal cual (X-Frame-Options) y el iframe queda en blanco.
+ */
+export function normalizeMapEmbedUrl(raw: string | undefined | null): string {
+  const input = String(raw ?? "").trim();
+  if (!input) return "";
+
+  // 1) Pegaron el HTML completo del iframe de "Compartir → Insertar un mapa"
+  const iframeSrc = input.match(/src=["']([^"']+)["']/i)?.[1];
+  let url = (iframeSrc || input).trim();
+
+  // Decodificar entidades por si viene de un copy-paste raro
+  url = url.replace(/&amp;/g, "&");
+
+  // 2) Ya es una URL de embed → listo
+  if (/google\.[^/]+\/maps\/embed/i.test(url) || /maps\.google\.[^/]+\/maps\?.*output=embed/i.test(url)) {
+    return url;
+  }
+
+  // 3) Coordenadas en el path: /@19.4326,-99.1332,17z
+  const atCoords = url.match(/@(-?\d+\.?\d*),(-?\d+\.?\d*)(?:,(\d+\.?\d*)z)?/);
+  if (atCoords) {
+    const [, lat, lng, zoom] = atCoords;
+    const z = zoom ? Math.round(Number(zoom)) : 15;
+    return `https://maps.google.com/maps?q=${lat},${lng}&z=${z}&output=embed&hl=es`;
+  }
+
+  // 4) ?q= / query= / ll= lat,lng
+  try {
+    const u = new URL(url.startsWith("http") ? url : `https://${url}`);
+    const q = u.searchParams.get("q") || u.searchParams.get("query");
+    if (q) {
+      return `https://maps.google.com/maps?q=${encodeURIComponent(q)}&z=15&output=embed&hl=es`;
+    }
+    const ll = u.searchParams.get("ll");
+    if (ll) {
+      return `https://maps.google.com/maps?q=${encodeURIComponent(ll)}&z=15&output=embed&hl=es`;
+    }
+    // /place/Nombre+Del+Lugar/
+    const place = u.pathname.match(/\/place\/([^/]+)/);
+    if (place?.[1]) {
+      const name = decodeURIComponent(place[1].replace(/\+/g, " "));
+      return `https://maps.google.com/maps?q=${encodeURIComponent(name)}&z=15&output=embed&hl=es`;
+    }
+    // /search/consulta
+    const search = u.pathname.match(/\/search\/([^/]+)/);
+    if (search?.[1]) {
+      const name = decodeURIComponent(search[1].replace(/\+/g, " "));
+      return `https://maps.google.com/maps?q=${encodeURIComponent(name)}&z=15&output=embed&hl=es`;
+    }
+  } catch {
+    // no es URL parseable
+  }
+
+  // 5) Texto libre (dirección escrita a mano)
+  if (!/^https?:\/\//i.test(input) && !input.includes("<iframe")) {
+    return `https://maps.google.com/maps?q=${encodeURIComponent(input)}&z=15&output=embed&hl=es`;
+  }
+
+  // 6) Enlaces cortos (maps.app.goo.gl / goo.gl) no se pueden expandir aquí.
+  //    Devolvemos vacío para que el UI pida el enlace completo o la dirección.
+  if (/maps\.app\.goo\.gl|goo\.gl\/maps/i.test(url)) {
+    return "";
+  }
+
+  // 7) Último recurso: usar la URL completa como query (share links largos de Google)
+  if (/google\.[^/]+\/maps/i.test(url) || /maps\.google\./i.test(url)) {
+    return `https://maps.google.com/maps?q=${encodeURIComponent(url)}&z=15&output=embed&hl=es`;
+  }
+
+  return `https://maps.google.com/maps?q=${encodeURIComponent(input)}&z=15&output=embed&hl=es`;
+}
 
 /**
  * Enlace del CTA del hero. Si el usuario no puso uno (o quedó el default
@@ -171,8 +351,8 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
       return {
         title: businessName || "Tu negocio, en grande",
         subtitle: "Cuéntale al mundo qué haces y por qué eres la mejor opción.",
-        ctaText: "Contáctanos",
-        // Vacío = el botón abre WhatsApp con el número del negocio (ver resolveCtaLink)
+        // Sin botón por defecto; el usuario puede agregar uno en el builder
+        ctaText: "",
         ctaLink: "",
       };
     case "about":
@@ -184,6 +364,8 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
     case "products":
       return {
         title: "Productos y servicios",
+        // Radio de esquinas de las tarjetas (px). Si no viene, se usa style.card.rounded.
+        radius: 20,
         items: [
           { name: "Producto estrella", description: "Descripción breve del producto.", price: "", imageUrl: "" },
           { name: "Servicio destacado", description: "Descripción breve del servicio.", price: "", imageUrl: "" },
@@ -235,6 +417,23 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
           { label: "Opción A", price: 50 },
           { label: "Opción B", price: 80 },
         ],
+      };
+    case "custom":
+      return {
+        title: "Sección personalizada",
+        text: "Escribe aquí el contenido que quieras mostrar. Puedes usar varios bloques personalizados en la misma página.",
+        imageUrl: "",
+        // layout: text | text-image | image-text | centered
+        layout: "text",
+      };
+    case "iframe":
+      return {
+        title: "",
+        // URL o HTML <iframe src="..."> — se normaliza al renderizar
+        url: "",
+        height: 480,
+        // full = ancho completo del sitio; narrow = columna centrada
+        width: "full", // full | narrow
       };
   }
 }

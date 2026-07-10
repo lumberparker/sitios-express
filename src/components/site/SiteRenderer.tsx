@@ -7,8 +7,15 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import type { SiteConfig, Section, TemplateConfig } from "@/lib/site-config";
-import { SECTION_LABELS, effectiveFonts, resolveCtaLink } from "@/lib/site-config";
+import type { SiteConfig, Section, TemplateConfig, ExtraPage } from "@/lib/site-config";
+import {
+  SECTION_LABELS,
+  effectiveFonts,
+  getExtraPages,
+  normalizeIframeSrc,
+  normalizeMapEmbedUrl,
+  resolveCtaLink,
+} from "@/lib/site-config";
 
 const ROUNDED: Record<string, string> = { none: "0", md: "10px", xl: "20px", full: "32px" };
 
@@ -57,13 +64,49 @@ function cardStyle(section: Section, tpl: TemplateConfig): React.CSSProperties {
   };
 }
 
-export function SiteRenderer({ config, templateConfig: tplBase }: { config: SiteConfig; templateConfig: TemplateConfig }) {
+export function SiteRenderer({
+  config,
+  templateConfig: tplBase,
+  previewPageId = "home",
+  onNavigatePage,
+}: {
+  config: SiteConfig;
+  templateConfig: TemplateConfig;
+  /** "home" o id de ExtraPage — controlado por el builder; en preview público se usa estado interno. */
+  previewPageId?: string;
+  onNavigatePage?: (pageId: string) => void;
+}) {
   // Tipografía: overrides del usuario (config.theme) sobre la del template
   const tpl: TemplateConfig = { ...tplBase, fonts: effectiveFonts(config, tplBase) };
   const [menuOpen, setMenuOpen] = useState(false);
-  const sections = [...config.sections].sort((a, b) => a.order - b.order);
-  const menuSections = sections.filter((s) => s.inMenu);
+  const [internalPage, setInternalPage] = useState(previewPageId);
+  const extraPages = getExtraPages(config);
+
+  // Sync con el builder cuando cambia la página en edición
+  useEffect(() => {
+    setInternalPage(previewPageId);
+  }, [previewPageId]);
+
+  const activePageId = onNavigatePage ? previewPageId : internalPage;
+  const goToPage = (id: string) => {
+    if (onNavigatePage) onNavigatePage(id);
+    else setInternalPage(id);
+    setMenuOpen(false);
+  };
+
+  const activeExtra: ExtraPage | null =
+    activePageId === "home" ? null : extraPages.find((p) => p.id === activePageId) ?? null;
+  const isHome = !activeExtra;
+
+  const homeSections = [...config.sections].sort((a, b) => a.order - b.order);
+  const pageSections = activeExtra
+    ? [...activeExtra.sections].sort((a, b) => a.order - b.order)
+    : [];
+  const sections = isHome ? homeSections : pageSections;
+  const menuSections = homeSections.filter((s) => s.inMenu);
   const accent = (s: Section) => s.style.accentColor || tpl.palette.primary;
+
+  const navLinkClass = "opacity-80 transition-opacity hover:opacity-100 cursor-pointer";
 
   return (
     <div
@@ -83,7 +126,7 @@ export function SiteRenderer({ config, templateConfig: tplBase }: { config: Site
         style={{ background: `${tpl.palette.background}e6`, borderBottom: `1px solid ${tpl.palette.text}14` }}
       >
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-3">
+          <button type="button" className="flex items-center gap-3 text-left" onClick={() => goToPage("home")}>
             {config.business.logoUrl && (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={config.business.logoUrl} alt={config.business.name} className="h-10 w-auto object-contain" />
@@ -93,12 +136,28 @@ export function SiteRenderer({ config, templateConfig: tplBase }: { config: Site
                 {config.business.name}
               </span>
             )}
-          </div>
-          <nav className="hidden gap-6 text-sm font-medium md:flex">
-            {menuSections.map((s) => (
-              <a key={s.id} href={`#${s.id}`} className="opacity-80 transition-opacity hover:opacity-100">
-                {(s.content.title as string) || SECTION_LABELS[s.type]}
-              </a>
+          </button>
+          <nav className="hidden flex-wrap items-center justify-end gap-x-6 gap-y-2 text-sm font-medium md:flex">
+            {isHome &&
+              menuSections.map((s) => (
+                <a key={s.id} href={`#${s.id}`} className={navLinkClass}>
+                  {(s.content.title as string) || SECTION_LABELS[s.type]}
+                </a>
+              ))}
+            {!isHome && (
+              <button type="button" className={navLinkClass} onClick={() => goToPage("home")}>
+                Inicio
+              </button>
+            )}
+            {extraPages.map((p, i) => (
+              <button
+                key={p.id}
+                type="button"
+                className={`${navLinkClass} ${activePageId === p.id ? "opacity-100 font-semibold" : ""}`}
+                onClick={() => goToPage(p.id)}
+              >
+                {p.title.trim() || `Página ${i + 1}`}
+              </button>
             ))}
           </nav>
           <button
@@ -117,19 +176,55 @@ export function SiteRenderer({ config, templateConfig: tplBase }: { config: Site
           className="overflow-hidden md:hidden"
           style={{ background: tpl.palette.surface }}
         >
-          {menuSections.map((s) => (
-            <a key={s.id} href={`#${s.id}`} className="block px-6 py-3 text-sm font-medium" onClick={() => setMenuOpen(false)}>
-              {(s.content.title as string) || SECTION_LABELS[s.type]}
-            </a>
+          {isHome &&
+            menuSections.map((s) => (
+              <a key={s.id} href={`#${s.id}`} className="block px-6 py-3 text-sm font-medium" onClick={() => setMenuOpen(false)}>
+                {(s.content.title as string) || SECTION_LABELS[s.type]}
+              </a>
+            ))}
+          {!isHome && (
+            <button type="button" className="block w-full px-6 py-3 text-left text-sm font-medium" onClick={() => goToPage("home")}>
+              Inicio
+            </button>
+          )}
+          {extraPages.map((p, i) => (
+            <button
+              key={p.id}
+              type="button"
+              className="block w-full px-6 py-3 text-left text-sm font-medium"
+              onClick={() => goToPage(p.id)}
+            >
+              {p.title.trim() || `Página ${i + 1}`}
+            </button>
           ))}
         </motion.nav>
       </header>
+
+      {/* Contenido de subpágina: título + texto libre + secciones */}
+      {!isHome && activeExtra && (
+        <section className="px-6 py-16" style={{ background: tpl.palette.background }}>
+          <div className="mx-auto max-w-3xl text-center">
+            <Reveal>
+              <h1 className="text-4xl font-bold md:text-5xl" style={{ fontFamily: `'${tpl.fonts.heading}', serif` }}>
+                {activeExtra.title.trim() || "Página"}
+              </h1>
+              {activeExtra.content.trim() && (
+                <p className="mx-auto mt-6 max-w-2xl whitespace-pre-line text-lg opacity-80">{activeExtra.content}</p>
+              )}
+            </Reveal>
+          </div>
+        </section>
+      )}
 
       {sections.map((section, i) => (
         <section key={section.id} id={section.id} style={sectionBg(section, tpl, i)}>
           <SectionBody section={section} tpl={tpl} accent={accent(section)} config={config} />
         </section>
       ))}
+
+      {!isHome && sections.length === 0 && !activeExtra?.content.trim() && (
+        <div className="px-6 py-20 text-center text-sm opacity-50">Agrega secciones a esta página desde el editor.</div>
+      )}
 
       {/* Footer */}
       <footer style={{ background: tpl.dark ? "#000000cc" : tpl.palette.text, color: tpl.dark ? tpl.palette.muted : tpl.palette.background }}>
@@ -243,7 +338,63 @@ function SectionBody({
         </div>
       );
 
-    case "products":
+    case "custom": {
+      const layout = c.layout ?? "text";
+      const withImage = layout === "text-image" || layout === "image-text";
+      const imageFirst = layout === "image-text";
+      const imageBlock = withImage ? (
+        <Reveal delay={imageFirst ? 0 : 0.15}>
+          {c.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={c.imageUrl} alt={c.title} className="w-full object-cover" style={{ borderRadius: 24, maxHeight: 420 }} />
+          ) : (
+            <div className="flex h-56 items-center justify-center text-sm opacity-40" style={{ borderRadius: 24, border: "2px dashed currentColor" }}>
+              Sube una imagen
+            </div>
+          )}
+        </Reveal>
+      ) : null;
+      const textBlock = (
+        <Reveal delay={imageFirst ? 0.15 : 0}>
+          <div className={layout === "centered" ? "text-center" : ""}>
+            <h2 className="text-3xl font-bold md:text-4xl" style={heading}>
+              {c.title}
+            </h2>
+            <div
+              className={`mt-2 h-1 w-16 rounded ${layout === "centered" ? "mx-auto" : ""}`}
+              style={{ background: accent }}
+            />
+            <p className={`mt-6 whitespace-pre-line leading-relaxed opacity-85 ${layout === "centered" ? "mx-auto max-w-2xl" : ""}`}>
+              {c.text}
+            </p>
+          </div>
+        </Reveal>
+      );
+      if (withImage) {
+        return (
+          <div className={`mx-auto grid max-w-6xl items-center gap-12 px-6 py-24 md:grid-cols-2`}>
+            {imageFirst ? (
+              <>
+                {imageBlock}
+                {textBlock}
+              </>
+            ) : (
+              <>
+                {textBlock}
+                {imageBlock}
+              </>
+            )}
+          </div>
+        );
+      }
+      return <div className="mx-auto max-w-3xl px-6 py-24">{textBlock}</div>;
+    }
+
+    case "products": {
+      const productCard = cardStyle(section, tpl);
+      if (c.radius != null && c.radius !== "") {
+        productCard.borderRadius = `${Number(c.radius)}px`;
+      }
       return (
         <div className="mx-auto max-w-6xl px-6 py-24">
           <Reveal>
@@ -254,7 +405,7 @@ function SectionBody({
           <div className="mt-12 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
             {(c.items ?? []).map((item: any, i: number) => (
               <Reveal key={i} delay={i * 0.08}>
-                <div className="overflow-hidden transition-transform hover:-translate-y-1" style={cardStyle(section, tpl)}>
+                <div className="overflow-hidden transition-transform hover:-translate-y-1" style={productCard}>
                   {item.imageUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={item.imageUrl} alt={item.name} className="h-44 w-full object-cover" />
@@ -278,6 +429,7 @@ function SectionBody({
           </div>
         </div>
       );
+    }
 
     case "testimonials":
       return (
@@ -312,7 +464,47 @@ function SectionBody({
     case "carousel":
       return <CarouselSection section={section} heading={heading} />;
 
-    case "map":
+    case "iframe": {
+      const src = normalizeIframeSrc(c.url);
+      const height = Math.min(900, Math.max(200, Number(c.height) || 480));
+      const narrow = c.width === "narrow";
+      return (
+        <div className={`mx-auto px-6 py-16 ${narrow ? "max-w-3xl" : "max-w-6xl"}`}>
+          {c.title ? (
+            <Reveal>
+              <h2 className="mb-8 text-center text-3xl font-bold md:text-4xl" style={heading}>
+                {c.title}
+              </h2>
+            </Reveal>
+          ) : null}
+          <Reveal delay={0.1}>
+            {src ? (
+              <iframe
+                src={src}
+                title={c.title || "Contenido embebido"}
+                className="w-full border-0 bg-black/5"
+                style={{ height, borderRadius: 16 }}
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                allowFullScreen
+              />
+            ) : (
+              <div
+                className="flex items-center justify-center text-sm opacity-40"
+                style={{ height, borderRadius: 16, border: "2px dashed currentColor" }}
+              >
+                Pega una URL en el builder para mostrar el iframe
+              </div>
+            )}
+          </Reveal>
+        </div>
+      );
+    }
+
+    case "map": {
+      // Si no hay enlace usable, la dirección visible también sirve para el mapa
+      const mapSrc = normalizeMapEmbedUrl(c.embedUrl) || normalizeMapEmbedUrl(c.address);
       return (
         <div className="mx-auto max-w-5xl px-6 py-24 text-center">
           <Reveal>
@@ -322,16 +514,25 @@ function SectionBody({
             {c.address && <p className="mt-3 opacity-75">{c.address}</p>}
           </Reveal>
           <Reveal delay={0.15}>
-            {c.embedUrl ? (
-              <iframe src={c.embedUrl} className="mt-8 h-96 w-full border-0" style={{ borderRadius: 20 }} loading="lazy" title="Mapa" />
+            {mapSrc ? (
+              <iframe
+                src={mapSrc}
+                className="mt-8 h-96 w-full border-0"
+                style={{ borderRadius: 20 }}
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                allowFullScreen
+                title="Mapa"
+              />
             ) : (
               <div className="mt-8 flex h-64 items-center justify-center text-sm opacity-40" style={{ borderRadius: 20, border: "2px dashed currentColor" }}>
-                Pega la URL de embed de Google Maps en el builder
+                Pega un enlace de Google Maps o la dirección en el builder
               </div>
             )}
           </Reveal>
         </div>
       );
+    }
 
     case "faq":
       return (

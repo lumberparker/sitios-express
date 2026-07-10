@@ -93,7 +93,7 @@ const widgets = [
   { slug: "contacto-avanzado", name: "Formulario de contacto avanzado", description: "Formulario con validación listo para conectar a tu correo.", sectionType: "contact", icon: "mail", price: 300 },
   { slug: "cotizador", name: "Calculadora de cotización", description: "Tus clientes arman su cotización con opciones y precio en vivo.", sectionType: "quote", icon: "calculator", price: 450 },
   { slug: "seccion-extra", name: "Sección extra", description: "Cualquier sección adicional agregada manualmente.", sectionType: null, icon: "layout", price: 100 },
-  { slug: "pagina-adicional", name: "Página adicional", description: "Páginas completas extra (ej. Nosotros o Contacto dedicada). Precio por página; tú defines qué lleva cada una.", sectionType: null, icon: "file-plus", price: 400 },
+  { slug: "pagina-adicional", name: "Página adicional", description: "Páginas completas extra. En cada una puedes armar secciones con widgets (galería, mapa, contacto…) y bloques personalizados. Precio por página.", sectionType: null, icon: "file-plus", price: 400 },
   // Descartado por ahora (2026-07-09): se conserva inactivo por si se retoma
   { slug: "multi-idioma", name: "Multi-idioma", description: "Tu sitio en español e inglés con selector de idioma.", sectionType: null, icon: "globe", price: 600, active: false },
   { slug: "montaje-sin-dominio", name: "Montaje en línea (sin dominio)", description: "Publicamos tu sitio en internet con una dirección nuestra (tu-negocio.sitiosexpress.mx).", sectionType: null, icon: "cloud", price: 300 },

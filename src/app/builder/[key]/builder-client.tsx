@@ -7,8 +7,13 @@ import { SiteRenderer } from "@/components/site/SiteRenderer";
 import { computeInvoice, BASE_SECTIONS, type LineItem } from "@/lib/pricing";
 import { formatMoney } from "@/lib/utils";
 import {
+  getExtraPages,
   makeSection,
+  normalizeExtraPages,
+  pageId,
+  REPEATABLE_SECTIONS,
   SECTION_LABELS,
+  type ExtraPage,
   type Section,
   type SectionType,
   type SiteConfig,
@@ -42,10 +47,16 @@ export function BuilderClient({
   const [config, setConfig] = useState<SiteConfig>(initialConfig);
   const [status, setStatus] = useState(siteStatus);
   const [tab, setTab] = useState<"secciones" | "widgets" | "negocio">("secciones");
+  /** "home" = página de inicio; id de ExtraPage = subpágina. */
+  const [editingPageId, setEditingPageId] = useState<string>("home");
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [error, setError] = useState("");
   const [linkCopied, setLinkCopied] = useState(false);
+
+  const extraPages = useMemo(() => getExtraPages(config), [config]);
+  const isHome = editingPageId === "home";
+  const activeExtraPage = extraPages.find((p) => p.id === editingPageId) ?? null;
 
   const invoice = useMemo(
     () => computeInvoice(config, template, catalog as any),
@@ -56,33 +67,71 @@ export function BuilderClient({
     setConfig((c) => fn(structuredClone(c)));
   }
 
-  function updateSection(id: string, fn: (s: Section) => void) {
+  function withPages(c: SiteConfig, pages: ExtraPage[]) {
+    c.widgets = c.widgets.filter((w) => w.widgetId !== "pagina-adicional");
+    if (pages.length > 0) c.widgets.push({ widgetId: "pagina-adicional", config: { pages } });
+  }
+
+  function mutateActiveSections(fn: (sections: Section[]) => Section[]) {
     update((c) => {
-      const s = c.sections.find((x) => x.id === id);
-      if (s) fn(s);
+      if (editingPageId === "home") {
+        c.sections = fn(c.sections);
+        return c;
+      }
+      const pages = normalizeExtraPages(
+        c.widgets.find((w) => w.widgetId === "pagina-adicional")?.config?.pages
+      );
+      const page = pages.find((p) => p.id === editingPageId);
+      if (page) page.sections = fn(page.sections);
+      withPages(c, pages);
       return c;
+    });
+  }
+
+  function updateSection(id: string, fn: (s: Section) => void) {
+    mutateActiveSections((sections) => {
+      const s = sections.find((x) => x.id === id);
+      if (s) fn(s);
+      return sections;
     });
   }
 
   function moveSection(id: string, dir: -1 | 1) {
-    update((c) => {
-      const sorted = [...c.sections].sort((a, b) => a.order - b.order);
+    mutateActiveSections((sections) => {
+      const sorted = [...sections].sort((a, b) => a.order - b.order);
       const i = sorted.findIndex((s) => s.id === id);
       const j = i + dir;
-      if (j < 0 || j >= sorted.length) return c;
+      if (j < 0 || j >= sorted.length) return sections;
       [sorted[i].order, sorted[j].order] = [sorted[j].order, sorted[i].order];
-      return c;
+      return sections;
     });
+  }
+
+  /** ¿El tipo de sección sigue usándose en inicio o en alguna página? */
+  function sectionTypeStillUsed(c: SiteConfig, type: string, exceptId?: string): boolean {
+    if (c.sections.some((s) => s.type === type && s.id !== exceptId)) return true;
+    return getExtraPages(c).some((p) => p.sections.some((s) => s.type === type && s.id !== exceptId));
   }
 
   function removeSection(id: string) {
     update((c) => {
-      const target = c.sections.find((s) => s.id === id);
-      c.sections = c.sections.filter((s) => s.id !== id);
-      // Si la sección venía de un widget, se quita también el cargo
+      let target: Section | undefined;
+      if (editingPageId === "home") {
+        target = c.sections.find((s) => s.id === id);
+        c.sections = c.sections.filter((s) => s.id !== id);
+      } else {
+        const pages = getExtraPages(c);
+        const page = pages.find((p) => p.id === editingPageId);
+        target = page?.sections.find((s) => s.id === id);
+        if (page) page.sections = page.sections.filter((s) => s.id !== id);
+        withPages(c, pages);
+      }
+      // Quitar widget solo si ya no hay ninguna sección de ese tipo en el sitio
       if (target) {
-        const w = catalog.find((w) => w.sectionType === target.type);
-        if (w) c.widgets = c.widgets.filter((x) => x.widgetId !== w.slug);
+        const w = catalog.find((w) => w.sectionType === target!.type);
+        if (w && !sectionTypeStillUsed(c, target.type, id)) {
+          c.widgets = c.widgets.filter((x) => x.widgetId !== w.slug);
+        }
       }
       return c;
     });
@@ -96,9 +145,18 @@ export function BuilderClient({
     update((c) => {
       if (c.widgets.some((x) => x.widgetId === w.slug)) {
         c.widgets = c.widgets.filter((x) => x.widgetId !== w.slug);
-        if (w.sectionType) c.sections = c.sections.filter((s) => s.type !== w.sectionType);
+        // Quitar secciones de ese tipo en inicio y en páginas extra
+        if (w.sectionType) {
+          c.sections = c.sections.filter((s) => s.type !== w.sectionType);
+          const pages = getExtraPages(c).map((p) => ({
+            ...p,
+            sections: p.sections.filter((s) => s.type !== w.sectionType),
+          }));
+          withPages(c, pages);
+        }
       } else {
         c.widgets.push({ widgetId: w.slug, config: {} });
+        // Al activar desde Widgets, la sección se agrega a la página de inicio
         if (w.sectionType && !c.sections.some((s) => s.type === w.sectionType)) {
           const maxOrder = Math.max(0, ...c.sections.map((s) => s.order));
           c.sections.push(makeSection(w.sectionType as SectionType, maxOrder + 1, c.business.name));
@@ -120,16 +178,42 @@ export function BuilderClient({
     });
   }
 
-  /** Agrega una sección: gratis si es base (hero/about/products), con cargo si viene de un widget. */
+  /**
+   * Agrega una sección a la página en edición.
+   * - En inicio: widgets se activan y facturan (igual que antes).
+   * - En página extra: la sección va en esa página; el widget se activa si aplica
+   *   (factura una vez). custom y bases se incluyen en el precio de la página.
+   */
   function addSection(type: SectionType) {
     const w = catalog.find((x) => x.sectionType === type);
-    if (w && !hasWidget(w.slug)) {
-      toggleWidget(w); // agrega la sección y su cargo en la factura
+
+    if (editingPageId === "home") {
+      if (w && !hasWidget(w.slug)) {
+        toggleWidget(w);
+        return;
+      }
+      update((c) => {
+        // custom / iframe se pueden repetir; el resto no si ya está
+        if (!REPEATABLE_SECTIONS.has(type) && c.sections.some((s) => s.type === type)) return c;
+        const maxOrder = Math.max(0, ...c.sections.map((s) => s.order));
+        c.sections.push(makeSection(type, maxOrder + 1, c.business.name));
+        return c;
+      });
       return;
     }
+
+    // Página adicional
     update((c) => {
-      const maxOrder = Math.max(0, ...c.sections.map((s) => s.order));
-      c.sections.push(makeSection(type, maxOrder + 1, c.business.name));
+      if (w && !c.widgets.some((x) => x.widgetId === w.slug)) {
+        c.widgets.push({ widgetId: w.slug, config: {} });
+      }
+      const pages = getExtraPages(c);
+      const page = pages.find((p) => p.id === editingPageId);
+      if (!page) return c;
+      if (!REPEATABLE_SECTIONS.has(type) && page.sections.some((s) => s.type === type)) return c;
+      const maxOrder = Math.max(0, ...page.sections.map((s) => s.order));
+      page.sections.push(makeSection(type, maxOrder + 1, c.business.name));
+      withPages(c, pages);
       return c;
     });
   }
@@ -137,10 +221,18 @@ export function BuilderClient({
   /** Página adicional: no es toggle — la cantidad es el número de páginas definidas. */
   function setExtraPages(pages: ExtraPage[]) {
     update((c) => {
-      c.widgets = c.widgets.filter((w) => w.widgetId !== "pagina-adicional");
-      if (pages.length > 0) c.widgets.push({ widgetId: "pagina-adicional", config: { pages } });
+      withPages(c, pages);
       return c;
     });
+    // Si se borró la página que se editaba, volver al inicio
+    if (editingPageId !== "home" && !pages.some((p) => p.id === editingPageId)) {
+      setEditingPageId("home");
+    }
+  }
+
+  function updateExtraPage(pageIdToEdit: string, patch: Partial<ExtraPage>) {
+    const pages = extraPages.map((p) => (p.id === pageIdToEdit ? { ...p, ...patch } : p));
+    setExtraPages(pages);
   }
 
   async function save() {
@@ -166,7 +258,10 @@ export function BuilderClient({
     });
   }
 
-  const sorted = [...config.sections].sort((a, b) => a.order - b.order);
+  const activeSections = isHome
+    ? config.sections
+    : activeExtraPage?.sections ?? [];
+  const sorted = [...activeSections].sort((a, b) => a.order - b.order);
 
   return (
     <div className="app-surface flex h-screen flex-col bg-slate-100">
@@ -234,23 +329,85 @@ export function BuilderClient({
 
             {tab === "secciones" && (
               <div className="space-y-3">
-                <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
-                  💡 Cada sección puede aparecer (o no) en el menú del header. <b>Consejo:</b> si agregas todas al menú
-                  puede verse demasiado lleno y perder elegancia — elige las 3 o 4 más importantes.
-                </p>
+                {/* Selector de página: inicio o páginas adicionales */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <Label>Página a editar</Label>
+                  <select
+                    value={editingPageId}
+                    onChange={(e) => setEditingPageId(e.target.value)}
+                    className="mt-1 h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+                  >
+                    <option value="home">Inicio (página principal)</option>
+                    {extraPages.map((p, i) => (
+                      <option key={p.id} value={p.id}>
+                        {p.title.trim() || `Página extra ${i + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                  {extraPages.length === 0 && (
+                    <p className="mt-1.5 text-[11px] text-slate-500">
+                      Para crear páginas nuevas ve a <b>Widgets → Página adicional</b>.
+                    </p>
+                  )}
+                </div>
+
+                {!isHome && activeExtraPage && (
+                  <div className="space-y-2 rounded-xl border border-brand-teal/40 bg-brand-teal/5 p-3">
+                    <div>
+                      <Label>Título de la página (menú y pestaña)</Label>
+                      <Input
+                        value={activeExtraPage.title}
+                        onChange={(e) => updateExtraPage(activeExtraPage.id, { title: e.target.value })}
+                        placeholder="Ej. Nosotros, Menú, Servicios…"
+                      />
+                    </div>
+                    <div>
+                      <Label>Texto introductorio (opcional)</Label>
+                      <Textarea
+                        rows={2}
+                        value={activeExtraPage.content}
+                        onChange={(e) => updateExtraPage(activeExtraPage.id, { content: e.target.value })}
+                        placeholder="Párrafo libre al inicio de la página…"
+                      />
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Debajo puedes armar la página con secciones de widgets o bloques <b>Personalizada</b>.
+                    </p>
+                  </div>
+                )}
+
+                {isHome && (
+                  <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
+                    💡 Cada sección puede aparecer (o no) en el menú del header. <b>Consejo:</b> si agregas todas al menú
+                    puede verse demasiado lleno y perder elegancia — elige las 3 o 4 más importantes.
+                  </p>
+                )}
+
+                {sorted.length === 0 && !isHome && (
+                  <p className="rounded-lg border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500">
+                    Esta página aún no tiene secciones. Agrega un widget (galería, mapa…) o un bloque personalizado.
+                  </p>
+                )}
+
                 {sorted.map((section, i) => (
                   <SectionEditor
                     key={section.id}
                     section={section}
                     isFirst={i === 0}
                     isLast={i === sorted.length - 1}
-                    canRemove={!BASE_SECTIONS.has(section.type) || section.type !== "hero"}
+                    canRemove={isHome ? !BASE_SECTIONS.has(section.type) || section.type !== "hero" : true}
+                    showInMenuToggle={isHome}
                     onChange={(fn) => updateSection(section.id, fn)}
                     onMove={(dir) => moveSection(section.id, dir)}
                     onRemove={() => removeSection(section.id)}
                   />
                 ))}
-                <AddSectionControl sections={config.sections} catalog={catalog} onAdd={addSection} />
+                <AddSectionControl
+                  sections={activeSections}
+                  catalog={catalog}
+                  onAdd={addSection}
+                  onExtraPage={!isHome}
+                />
               </div>
             )}
 
@@ -288,8 +445,12 @@ export function BuilderClient({
                   })}
                 <ExtraPagesCard
                   widget={catalog.find((w) => w.slug === "pagina-adicional")}
-                  pages={(widgetConfig("pagina-adicional").pages as ExtraPage[]) ?? []}
+                  pages={extraPages}
                   onChange={setExtraPages}
+                  onOpenPage={(id) => {
+                    setEditingPageId(id);
+                    setTab("secciones");
+                  }}
                 />
               </div>
             )}
@@ -300,7 +461,12 @@ export function BuilderClient({
         <main className="min-w-0 flex-1 overflow-y-auto bg-slate-200 p-4">
           {/* translateZ(0) hace que el botón fixed de WhatsApp quede contenido en el preview */}
           <div className="mx-auto min-h-full max-w-5xl overflow-hidden rounded-xl shadow-2xl" style={{ transform: "translateZ(0)" }}>
-            <SiteRenderer config={config} templateConfig={templateConfig} />
+            <SiteRenderer
+              config={config}
+              templateConfig={templateConfig}
+              previewPageId={editingPageId}
+              onNavigatePage={setEditingPageId}
+            />
           </div>
         </main>
 
@@ -432,19 +598,32 @@ function AddSectionControl({
   sections,
   catalog,
   onAdd,
+  onExtraPage = false,
 }: {
   sections: Section[];
   catalog: { slug: string; sectionType: string | null; price: number }[];
   onAdd: (type: SectionType) => void;
+  /** En páginas extra: custom se puede repetir; el precio de widgets se factura 1 vez. */
+  onExtraPage?: boolean;
 }) {
   const [selected, setSelected] = useState("");
   const present = new Set(sections.map((s) => s.type));
-  const available = (Object.keys(SECTION_LABELS) as SectionType[]).filter((t) => !present.has(t));
+  const available = (Object.keys(SECTION_LABELS) as SectionType[]).filter((t) => {
+    if (REPEATABLE_SECTIONS.has(t)) return true; // personalizada e iframe se pueden repetir
+    return !present.has(t);
+  });
   if (available.length === 0) return null;
 
   const priceLabel = (t: SectionType) => {
+    if (onExtraPage) {
+      const w = catalog.find((x) => x.sectionType === t);
+      if (w) return `widget +${formatMoney(w.price)}`;
+      return "incluida en la página";
+    }
     const w = catalog.find((x) => x.sectionType === t);
-    return w ? `+${formatMoney(w.price)}` : "incluida";
+    if (w) return `+${formatMoney(w.price)}`;
+    if (REPEATABLE_SECTIONS.has(t)) return "sección extra";
+    return "incluida";
   };
 
   return (
@@ -475,15 +654,15 @@ function AddSectionControl({
         </Button>
       </div>
       <p className="mt-1.5 text-xs text-slate-400">
-        Las secciones borradas se pueden volver a agregar aquí. Las que vienen de un widget suman su precio a la factura.
+        {onExtraPage
+          ? "Puedes combinar widgets (galería, mapa, contacto…) y bloques personalizados. Los widgets se cobran una sola vez en todo el sitio."
+          : "Las secciones borradas se pueden volver a agregar aquí. Las de widget suman su precio; Personalizada cuenta como sección extra."}
       </p>
     </div>
   );
 }
 
 // --- Configuración de widgets ------------------------------------------------
-
-export type ExtraPage = { title: string; content: string };
 
 /** Config específica por widget cuando está activo. */
 function WidgetConfig({
@@ -545,15 +724,17 @@ function WidgetConfig({
   return null;
 }
 
-/** Página adicional: se definen cuántas y qué lleva cada una (precio por página). */
+/** Página adicional: se definen cuántas páginas hay; el contenido se arma en Secciones. */
 function ExtraPagesCard({
   widget,
   pages,
   onChange,
+  onOpenPage,
 }: {
   widget?: { name: string; description: string; price: number };
   pages: ExtraPage[];
   onChange: (pages: ExtraPage[]) => void;
+  onOpenPage?: (pageId: string) => void;
 }) {
   if (!widget) return null;
   return (
@@ -562,34 +743,66 @@ function ExtraPagesCard({
       <p className="mt-0.5 text-xs text-slate-500">{widget.description}</p>
       <p className="mt-2 text-sm font-bold text-brand-navy">
         {formatMoney(widget.price)} <span className="font-normal text-slate-400">por página</span>
-        {pages.length > 0 && <span className="ml-2 text-slate-600">× {pages.length} = {formatMoney(widget.price * pages.length)}</span>}
+        {pages.length > 0 && (
+          <span className="ml-2 text-slate-600">
+            × {pages.length} = {formatMoney(widget.price * pages.length)}
+          </span>
+        )}
+      </p>
+      <p className="mt-2 rounded-lg bg-white/70 p-2 text-[11px] text-slate-600">
+        Cada página puede armarse con <b>secciones de widgets</b> (galería, mapa, contacto…) y bloques{" "}
+        <b>Personalizada</b>. Crea la página aquí y edítala en la pestaña <b>Secciones</b>.
       </p>
 
       <div className="mt-3 space-y-3">
         {pages.map((page, i) => (
-          <div key={i} className="rounded-lg border border-slate-200 bg-white p-3">
-            <div className="flex items-center justify-between">
+          <div key={page.id} className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="flex items-center justify-between gap-2">
               <Label className="mb-0">Página {i + 1}</Label>
-              <button onClick={() => onChange(pages.filter((_, j) => j !== i))} className="text-xs text-rose-500 hover:underline">
-                Quitar
-              </button>
+              <div className="flex items-center gap-2">
+                {onOpenPage && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenPage(page.id)}
+                    className="text-xs font-medium text-brand-navy hover:underline"
+                  >
+                    Editar secciones →
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onChange(pages.filter((p) => p.id !== page.id))}
+                  className="text-xs text-rose-500 hover:underline"
+                >
+                  Quitar
+                </button>
+              </div>
             </div>
             <Input
               className="mt-2"
               placeholder="Título (ej. Nosotros, Menú, Contacto)"
               value={page.title}
-              onChange={(e) => onChange(pages.map((p, j) => (j === i ? { ...p, title: e.target.value } : p)))}
+              onChange={(e) =>
+                onChange(pages.map((p) => (p.id === page.id ? { ...p, title: e.target.value } : p)))
+              }
             />
-            <Textarea
-              className="mt-2"
-              rows={3}
-              placeholder="¿Qué va en esta página? Describe el contenido (texto, fotos, secciones que quieres)…"
-              value={page.content}
-              onChange={(e) => onChange(pages.map((p, j) => (j === i ? { ...p, content: e.target.value } : p)))}
-            />
+            <p className="mt-1.5 text-[11px] text-slate-400">
+              {page.sections.length === 0
+                ? "Sin secciones aún"
+                : `${page.sections.length} sección${page.sections.length === 1 ? "" : "es"}`}
+              {page.content?.trim() ? " · con texto intro" : ""}
+            </p>
           </div>
         ))}
-        <Button variant="outline" size="sm" onClick={() => onChange([...pages, { title: "", content: "" }])}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            const next: ExtraPage = { id: pageId(), title: "", content: "", sections: [] };
+            onChange([...pages, next]);
+            onOpenPage?.(next.id);
+          }}
+        >
           + Agregar página
         </Button>
       </div>
@@ -757,6 +970,7 @@ function SectionEditor({
   isFirst,
   isLast,
   canRemove,
+  showInMenuToggle = true,
   onChange,
   onMove,
   onRemove,
@@ -765,6 +979,7 @@ function SectionEditor({
   isFirst: boolean;
   isLast: boolean;
   canRemove: boolean;
+  showInMenuToggle?: boolean;
   onChange: (fn: (s: Section) => void) => void;
   onMove: (dir: -1 | 1) => void;
   onRemove: () => void;
@@ -774,16 +989,23 @@ function SectionEditor({
   const setContent = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     onChange((s) => (s.content[k] = e.target.value));
 
+  const label =
+    section.type === "custom" && c.title
+      ? `${SECTION_LABELS.custom}: ${String(c.title).slice(0, 28)}`
+      : section.type === "iframe" && (c.title || c.url)
+        ? `${SECTION_LABELS.iframe}: ${String(c.title || c.url).slice(0, 28)}`
+        : SECTION_LABELS[section.type];
+
   return (
     <div className="rounded-xl border border-slate-200">
       <div className="flex items-center justify-between px-3 py-2.5">
         <button onClick={() => setOpen((v) => !v)} className="flex-1 text-left text-sm font-medium text-slate-800">
-          {open ? "▾" : "▸"} {SECTION_LABELS[section.type]}
+          {open ? "▾" : "▸"} {label}
         </button>
         <div className="flex items-center gap-1 text-slate-400">
           <button onClick={() => onMove(-1)} disabled={isFirst} className="rounded px-1.5 py-0.5 hover:bg-slate-100 disabled:opacity-30" title="Subir">↑</button>
           <button onClick={() => onMove(1)} disabled={isLast} className="rounded px-1.5 py-0.5 hover:bg-slate-100 disabled:opacity-30" title="Bajar">↓</button>
-          {canRemove && section.type !== "hero" && (
+          {canRemove && (section.type !== "hero" || !showInMenuToggle) && (
             <button onClick={onRemove} className="rounded px-1.5 py-0.5 text-rose-400 hover:bg-rose-50" title="Quitar">✕</button>
           )}
         </div>
@@ -791,10 +1013,12 @@ function SectionEditor({
 
       {open && (
         <div className="space-y-3 border-t border-slate-100 p-3">
-          <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input type="checkbox" checked={section.inMenu} onChange={(e) => onChange((s) => (s.inMenu = e.target.checked))} />
-            Mostrar en el menú del header
-          </label>
+          {showInMenuToggle && (
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={section.inMenu} onChange={(e) => onChange((s) => (s.inMenu = e.target.checked))} />
+              Mostrar en el menú del header
+            </label>
+          )}
           {section.type === "contact" && (
             <p className="rounded-lg bg-amber-50 p-2.5 text-xs text-amber-700">
               📬 Aquí editas los textos del formulario. El <b>envío de mensajes</b> (a tu correo o WhatsApp) lo
@@ -812,9 +1036,16 @@ function SectionEditor({
             <>
               <div><Label>Subtítulo</Label><Textarea rows={2} value={c.subtitle ?? ""} onChange={setContent("subtitle")} /></div>
               <div className="grid grid-cols-2 gap-2">
-                <div><Label>Texto del botón</Label><Input value={c.ctaText ?? ""} onChange={setContent("ctaText")} /></div>
-                <div><Label>Enlace del botón</Label><Input value={c.ctaLink ?? ""} onChange={setContent("ctaLink")} placeholder="Vacío = abre tu WhatsApp" /></div>
+                <div>
+                  <Label>Texto del botón</Label>
+                  <Input value={c.ctaText ?? ""} onChange={setContent("ctaText")} placeholder="Vacío = sin botón" />
+                </div>
+                <div>
+                  <Label>Enlace del botón</Label>
+                  <Input value={c.ctaLink ?? ""} onChange={setContent("ctaLink")} placeholder="Vacío = abre tu WhatsApp" />
+                </div>
               </div>
+              <p className="text-[11px] text-slate-500">Si dejas el texto del botón vacío, no se muestra ningún botón de contacto.</p>
             </>
           )}
           {section.type === "about" && (
@@ -823,14 +1054,103 @@ function SectionEditor({
               <ImageField label="Imagen" value={c.imageUrl ?? ""} onUploaded={(url) => onChange((s) => (s.content.imageUrl = url))} />
             </>
           )}
+          {section.type === "custom" && (
+            <>
+              <div>
+                <Label>Texto</Label>
+                <Textarea rows={5} value={c.text ?? ""} onChange={setContent("text")} />
+              </div>
+              <div>
+                <Label>Diseño</Label>
+                <select
+                  value={c.layout ?? "text"}
+                  onChange={(e) => onChange((s) => (s.content.layout = e.target.value))}
+                  className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+                >
+                  <option value="text">Solo texto</option>
+                  <option value="text-image">Texto + imagen a la derecha</option>
+                  <option value="image-text">Imagen a la izquierda + texto</option>
+                  <option value="centered">Centrado</option>
+                </select>
+              </div>
+              {(c.layout === "text-image" || c.layout === "image-text") && (
+                <ImageField label="Imagen" value={c.imageUrl ?? ""} onUploaded={(url) => onChange((s) => (s.content.imageUrl = url))} />
+              )}
+            </>
+          )}
+          {section.type === "iframe" && (
+            <>
+              <div>
+                <Label>URL a embeber</Label>
+                <Input
+                  value={c.url ?? ""}
+                  onChange={setContent("url")}
+                  placeholder="https://… o pega el HTML del iframe"
+                />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Pega la URL del contenido (YouTube, formularios, calendarios, otra web que permita embed) o el código{" "}
+                  <code className="rounded bg-slate-100 px-1">&lt;iframe src=&quot;…&quot;&gt;</code> completo. Solo con la URL se genera el iframe.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label>Alto ({Number(c.height ?? 480)}px)</Label>
+                  <input
+                    type="range"
+                    min={200}
+                    max={900}
+                    step={20}
+                    value={Number(c.height ?? 480)}
+                    onChange={(e) => onChange((s) => (s.content.height = Number(e.target.value)))}
+                    className="w-full"
+                  />
+                </div>
+                <div>
+                  <Label>Ancho</Label>
+                  <select
+                    value={c.width ?? "full"}
+                    onChange={(e) => onChange((s) => (s.content.width = e.target.value))}
+                    className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+                  >
+                    <option value="full">Ancho completo</option>
+                    <option value="narrow">Centrado (más estrecho)</option>
+                  </select>
+                </div>
+              </div>
+            </>
+          )}
           {section.type === "map" && (
             <>
               <div><Label>Dirección visible</Label><Input value={c.address ?? ""} onChange={setContent("address")} /></div>
-              <div><Label>URL de embed de Google Maps</Label><Input value={c.embedUrl ?? ""} onChange={setContent("embedUrl")} placeholder="https://www.google.com/maps/embed?pb=…" /></div>
+              <div>
+                <Label>Enlace de Google Maps</Label>
+                <Input
+                  value={c.embedUrl ?? ""}
+                  onChange={setContent("embedUrl")}
+                  placeholder="Pega el enlace de Maps, o el código del iframe"
+                />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Acepta el enlace normal de Maps (Compartir → copiar enlace), la dirección escrita, o el HTML de{" "}
+                  <b>Insertar un mapa</b>. Los links cortos (maps.app.goo.gl) a veces fallan: mejor el enlace completo o las coordenadas.
+                </p>
+              </div>
             </>
           )}
           {section.type === "contact" && (
             <div><Label>Subtítulo</Label><Input value={c.subtitle ?? ""} onChange={setContent("subtitle")} /></div>
+          )}
+          {section.type === "products" && (
+            <div>
+              <Label>Esquinas redondeadas ({Number(c.radius ?? 20)}px)</Label>
+              <input
+                type="range"
+                min={0}
+                max={40}
+                value={Number(c.radius ?? 20)}
+                onChange={(e) => onChange((s) => (s.content.radius = Number(e.target.value)))}
+                className="w-full"
+              />
+            </div>
           )}
           {(section.type === "products" || section.type === "testimonials" || section.type === "faq") && (
             <ItemsEditor section={section} onChange={onChange} />
