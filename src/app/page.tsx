@@ -53,7 +53,7 @@ export default function Home() {
             { t: "1. Cuéntanos de tu negocio", d: "Formulario paso a paso aquí, o conversando con nuestro bot de WhatsApp." },
             { t: "2. Personaliza todo", d: "Templates con carácter, secciones, colores, fondos y widgets con precio claro." },
             { t: "3. Paga y descarga", d: "Tu sitio vive en una URL privada. Edita cuando quieras y, al confirmar tu pago, descarga el .zip listo para publicar." },
-            { t: "4. Ponlo en línea", d: "Te ayudamos a publicarlo — con tu propio dominio o con una dirección nuestra — o hazlo por tu cuenta: el código funciona en cualquier hosting." },
+            { t: "4. Ponlo en línea", d: "Te ayudamos a publicarlo — con tu propio dominio o con una dirección genérica — o hazlo por tu cuenta: el código funciona en cualquier hosting." },
           ].map((f) => (
             <div key={f.t} className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur">
               <h3 className="font-display font-semibold text-white">{f.t}</h3>
