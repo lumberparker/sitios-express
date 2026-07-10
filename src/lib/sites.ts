@@ -19,7 +19,7 @@ export type OnboardingInput = {
 /**
  * Crea un sitio con su config inicial, factura y primera versión.
  * No requiere cuenta: la editKey (URL secreta /builder/<editKey>) es la
- * llave de acceso del dueño para editar, descargar y pagar.
+ * llave de acceso del dueño para editar, pagar y (ya pagado) descargar.
  */
 export async function createOnboardedSite(input: OnboardingInput) {
   const template = await prisma.template.findUnique({ where: { id: input.templateId } });

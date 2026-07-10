@@ -125,7 +125,7 @@ export async function handleIncomingMessage(phone: string, text: string): Promis
 
       return (
         `🚀 ¡Listo! Tu sitio *${data.businessName}* ya está creado.\n\n` +
-        `Este es tu enlace privado para verlo, personalizarlo, descargarlo y pagarlo cuando quieras:\n${appUrl()}/builder/${site.editKey}\n\n` +
+        `Este es tu enlace privado para verlo y personalizarlo cuando quieras (al confirmar tu pago podrás descargar el código):\n${appUrl()}/builder/${site.editKey}\n\n` +
         `⚠️ *Guarda este enlace*: es tu llave de acceso al sitio (no necesitas cuenta ni contraseña). Escribe *reiniciar* si quieres crear otro sitio.`
       );
     }

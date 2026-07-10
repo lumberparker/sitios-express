@@ -37,7 +37,8 @@ export default function Home() {
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-lg text-slate-400">
           Llena un formulario (o chatea con nuestro bot de WhatsApp), elige un template con personalidad y personaliza
-          todo. Tu sitio queda guardado en un enlace privado: vuelve cuando quieras a editarlo, descargarlo o pagarlo.
+          todo. Tu sitio queda guardado en un enlace privado: vuelve cuando quieras a editarlo, y al pagar descargas tu
+          código listo para publicar.
         </p>
         <div className="mt-10 flex items-center justify-center gap-4">
           <Link
@@ -51,7 +52,7 @@ export default function Home() {
           {[
             { t: "1. Cuéntanos de tu negocio", d: "Formulario paso a paso aquí, o conversando con nuestro bot de WhatsApp." },
             { t: "2. Personaliza todo", d: "Templates con carácter, secciones, colores, fondos y widgets con precio claro." },
-            { t: "3. Guarda tu enlace", d: "Tu sitio vive en una URL privada. Edita, descarga el .zip y paga cuando quieras." },
+            { t: "3. Paga y descarga", d: "Tu sitio vive en una URL privada. Edita cuando quieras y, al confirmar tu pago, descarga el .zip listo para publicar." },
           ].map((f) => (
             <div key={f.t} className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur">
               <h3 className="font-display font-semibold text-white">{f.t}</h3>
