@@ -140,6 +140,19 @@ export const SECTION_LABELS: Record<SectionType, string> = {
   quote: "Calculadora de cotización",
 };
 
+/**
+ * Enlace del CTA del hero. Si el usuario no puso uno (o quedó el default
+ * viejo "#contacto"), abre WhatsApp con el número del negocio.
+ */
+export function resolveCtaLink(ctaLink: string | undefined, config: SiteConfig): string {
+  const link = (ctaLink ?? "").trim();
+  const isDefault = !link || link === "#" || link === "#contacto";
+  if (isDefault && config.whatsapp.number) {
+    return `https://wa.me/${config.whatsapp.number.replace(/\D/g, "")}?text=${encodeURIComponent(config.whatsapp.defaultMessage)}`;
+  }
+  return link || "#";
+}
+
 /** Tipografía efectiva: overrides del usuario o la del template. */
 export function effectiveFonts(config: SiteConfig, tpl: TemplateConfig): TemplateConfig["fonts"] {
   const t = config.theme ?? { fontHeading: "", fontBody: "", fontEmbedUrl: "" };
@@ -159,7 +172,8 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
         title: businessName || "Tu negocio, en grande",
         subtitle: "Cuéntale al mundo qué haces y por qué eres la mejor opción.",
         ctaText: "Contáctanos",
-        ctaLink: "#contacto",
+        // Vacío = el botón abre WhatsApp con el número del negocio (ver resolveCtaLink)
+        ctaLink: "",
       };
     case "about":
       return {

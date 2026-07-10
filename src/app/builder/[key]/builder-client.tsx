@@ -813,7 +813,7 @@ function SectionEditor({
               <div><Label>Subtítulo</Label><Textarea rows={2} value={c.subtitle ?? ""} onChange={setContent("subtitle")} /></div>
               <div className="grid grid-cols-2 gap-2">
                 <div><Label>Texto del botón</Label><Input value={c.ctaText ?? ""} onChange={setContent("ctaText")} /></div>
-                <div><Label>Enlace del botón</Label><Input value={c.ctaLink ?? ""} onChange={setContent("ctaLink")} /></div>
+                <div><Label>Enlace del botón</Label><Input value={c.ctaLink ?? ""} onChange={setContent("ctaLink")} placeholder="Vacío = abre tu WhatsApp" /></div>
               </div>
             </>
           )}

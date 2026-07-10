@@ -8,7 +8,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import type { SiteConfig, Section, TemplateConfig } from "@/lib/site-config";
-import { SECTION_LABELS, effectiveFonts } from "@/lib/site-config";
+import { SECTION_LABELS, effectiveFonts, resolveCtaLink } from "@/lib/site-config";
 
 const ROUNDED: Record<string, string> = { none: "0", md: "10px", xl: "20px", full: "32px" };
 
@@ -127,7 +127,7 @@ export function SiteRenderer({ config, templateConfig: tplBase }: { config: Site
 
       {sections.map((section, i) => (
         <section key={section.id} id={section.id} style={sectionBg(section, tpl, i)}>
-          <SectionBody section={section} tpl={tpl} accent={accent(section)} business={config.business} />
+          <SectionBody section={section} tpl={tpl} accent={accent(section)} config={config} />
         </section>
       ))}
 
@@ -180,12 +180,12 @@ function SectionBody({
   section,
   tpl,
   accent,
-  business,
+  config,
 }: {
   section: Section;
   tpl: TemplateConfig;
   accent: string;
-  business: SiteConfig["business"];
+  config: SiteConfig;
 }) {
   const c = section.content;
   const heading = { fontFamily: `'${tpl.fonts.heading}', serif` };
@@ -205,7 +205,9 @@ function SectionBody({
           {c.ctaText && (
             <Reveal delay={0.3}>
               <a
-                href={c.ctaLink || "#"}
+                href={resolveCtaLink(c.ctaLink, config)}
+                target={resolveCtaLink(c.ctaLink, config).startsWith("http") ? "_blank" : undefined}
+                rel="noreferrer"
                 className="mt-10 inline-block rounded-full px-10 py-4 text-lg font-semibold text-white shadow-lg transition-transform hover:scale-105"
                 style={{ background: accent }}
               >

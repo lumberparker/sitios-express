@@ -5,7 +5,7 @@
 // de export las incluye en el .zip.
 
 import type { SiteConfig, Section, TemplateConfig } from "@/lib/site-config";
-import { SECTION_LABELS, effectiveFonts } from "@/lib/site-config";
+import { SECTION_LABELS, effectiveFonts, resolveCtaLink } from "@/lib/site-config";
 
 const ROUNDED: Record<string, string> = { none: "0", md: "10px", xl: "20px", full: "32px" };
 
@@ -88,19 +88,22 @@ function cardVars(section: Section): string {
   };${section.style.accentColor ? `--accent:${section.style.accentColor};` : ""}`;
 }
 
-function renderSection(section: Section, tpl: TemplateConfig, index: number): string {
+function renderSection(section: Section, tpl: TemplateConfig, index: number, config: SiteConfig): string {
   const c = section.content;
   const attrs = `id="${section.id}" style="${bgStyle(section, tpl, index)}${cardVars(section)}"`;
 
   switch (section.type) {
-    case "hero":
+    case "hero": {
+      const ctaHref = resolveCtaLink(c.ctaLink, config);
+      const ctaTarget = ctaHref.startsWith("http") ? ` target="_blank" rel="noreferrer"` : "";
       return `<section ${attrs} class="hero">
   <div class="container hero__inner reveal">
     <h1 class="hero__title">${esc(c.title)}</h1>
     <p class="hero__subtitle">${esc(c.subtitle)}</p>
-    ${c.ctaText ? `<a class="button hero__cta" href="${esc(c.ctaLink || "#")}">${esc(c.ctaText)}</a>` : ""}
+    ${c.ctaText ? `<a class="button hero__cta" href="${esc(ctaHref)}"${ctaTarget}>${esc(c.ctaText)}</a>` : ""}
   </div>
 </section>`;
+    }
 
     case "about":
       return `<section ${attrs} class="about">
@@ -373,7 +376,7 @@ export function generateStaticSite(config: SiteConfig, tplBase: TemplateConfig):
 
   const indexBody = `  ${headerHtml(config, sections, pages, false)}
 
-${sections.map((s, i) => renderSection(s, tpl, i)).join("\n\n")}
+${sections.map((s, i) => renderSection(s, tpl, i, config)).join("\n\n")}
 
   ${footerHtml(config)}
 
