@@ -33,14 +33,13 @@ export async function GET(_req: Request, { params }: { params: { key: string } }
   const zip = new JSZip();
   for (const [name, content] of Object.entries(files)) zip.file(name, content);
 
-  // Imágenes subidas → assets/images/ (disco local en dev, Blob en prod)
+  // Incluir imágenes subidas como assets/ (disco local en dev, Blob en prod)
   for (const url of collectUploads(config)) {
     try {
       const buf = url.startsWith("/uploads/")
         ? await readFile(path.join(process.cwd(), "public", url))
         : Buffer.from(await (await fetch(url)).arrayBuffer());
-      const name = url.split("/").pop() || "image";
-      zip.file(`assets/images/${name}`, buf);
+      zip.file(`assets/${url.split("/").pop()}`, buf);
     } catch {
       // imagen inaccesible: se omite sin romper el export
     }
@@ -49,20 +48,8 @@ export async function GET(_req: Request, { params }: { params: { key: string } }
   zip.file(
     "README.txt",
     `Sitio generado por Sitios Web Express para ${config.business.name}.\n\n` +
-      `Estructura:\n` +
-      `  index.html          — página principal\n` +
-      `  styles.css          — importa todos los CSS de styles/\n` +
-      `  styles/             — un archivo por bloque (header.css, hero.css, map.css…)\n` +
-      `  styles/fonts.css    — Google Fonts (@import). Edítalo para cambiar tipografías.\n` +
-      `  styles/base.css     — variables de color y fuentes (--font-heading, --font-body)\n` +
-      `  script.js           — menú, carrusel, cotizador…\n` +
-      `  assets/images/      — imágenes del sitio\n\n` +
-      `Tipografías personalizadas:\n` +
-      `  1) fonts.google.com → elige familias → "Get embed code"\n` +
-      `  2) Copia la URL css2?family=... en styles/fonts.css (@import url("..."))\n` +
-      `  3) Actualiza --font-heading y --font-body en styles/base.css\n` +
-      `  (O usa el builder: Negocio → Tipografía → pegar el <link> de Google Fonts)\n\n` +
-      `Para publicarlo sube TODOS los archivos a tu hosting (Netlify, Vercel, cPanel…).\n` +
+      `Contenido: index.html, styles.css, script.js y assets/.\n` +
+      `Para publicarlo sube TODOS los archivos a tu hosting (Netlify, Vercel, GitHub Pages, cPanel...).\n` +
       `No requiere instalación ni dependencias.\n`
   );
 

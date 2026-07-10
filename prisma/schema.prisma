@@ -121,6 +121,9 @@ model Invoice {
   // [{ label, qty, unitPrice, subtotal }] — snapshot calculado en cada guardado
   lineItems Json
   total     Int
+  // Monto ya cobrado. Si el cliente agrega módulos después de pagar,
+  // total > paidTotal ⇒ el sitio vuelve a COMPLETED y se bloquea la descarga.
+  paidTotal Int           @default(0)
   status    InvoiceStatus @default(DRAFT)
   updatedAt DateTime      @updatedAt
 }

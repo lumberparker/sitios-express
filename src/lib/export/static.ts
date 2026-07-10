@@ -1,22 +1,11 @@
 // Generador de exportación estática: SiteConfig → { archivo: contenido }.
 // Produce HTML/CSS/JS puro, sin dependencias, listo para cualquier hosting.
 // Convención de clases: BEM (bloque__elemento--modificador, estados .is-*).
-// Imágenes subidas → assets/images/
-// Estilos: styles.css importa styles/*.css (header, hero, map, …)
+// Las imágenes subidas (/uploads/...) se reescriben a assets/ y el endpoint
+// de export las incluye en el .zip.
 
-import type { SiteConfig, Section, TemplateConfig, ExtraPage as ConfigExtraPage } from "@/lib/site-config";
-import {
-  SECTION_LABELS,
-  cssObjectPosition,
-  effectiveFonts,
-  getExtraPages,
-  normalizeIframeSrc,
-  normalizeMapEmbedUrl,
-  normalizeObjectFit,
-  normalizePosX,
-  normalizePosY,
-  resolveCtaLink,
-} from "@/lib/site-config";
+import type { SiteConfig, Section, TemplateConfig } from "@/lib/site-config";
+import { SECTION_LABELS, businessWhatsAppUrl, cardRadiusPx, effectiveFonts, resolveCtaLink } from "@/lib/site-config";
 
 const ROUNDED: Record<string, string> = { none: "0", md: "10px", xl: "20px", full: "32px" };
 
@@ -36,22 +25,18 @@ function slugify(s: string): string {
 }
 
 // Imágenes subidas: en dev viven en /uploads/, en producción en Vercel Blob.
-// Se reescriben a assets/images/ y el endpoint de export las mete al .zip.
+// Ambas se reescriben a assets/ y el endpoint de export las mete al .zip
+// para que el sitio descargado sea autocontenido.
 const BLOB_URL_RE = /^https:\/\/[^/]+\.public\.blob\.vercel-storage\.com\//;
 
 export function isUploadedAsset(url: string): boolean {
   return url.startsWith("/uploads/") || BLOB_URL_RE.test(url);
 }
 
-/** Nombre de archivo de una URL de upload/blob (sin path). */
-export function assetFileName(url: string): string {
-  return url.split("/").pop() || "image";
-}
-
-/** /uploads/foo.png o URL de Blob → assets/images/foo.png */
+/** /uploads/foo.png o URL de Blob → assets/foo.png */
 export function assetPath(url: string): string {
   if (!isUploadedAsset(url)) return url;
-  return `assets/images/${assetFileName(url)}`;
+  return `assets/${url.split("/").pop()}`;
 }
 
 export function collectUploads(config: SiteConfig): string[] {
@@ -65,14 +50,16 @@ export function collectUploads(config: SiteConfig): string[] {
   return [...urls];
 }
 
-type ExtraPageExport = ConfigExtraPage & { file: string };
+type ExtraPage = { title: string; content: string; file: string };
 
-function extraPages(config: SiteConfig): ExtraPageExport[] {
-  return getExtraPages(config)
-    .filter((p) => p.title || p.content || p.sections.length > 0)
+function extraPages(config: SiteConfig): ExtraPage[] {
+  const entry = config.widgets.find((w) => w.widgetId === "pagina-adicional");
+  const pages: { title: string; content: string }[] = (entry?.config as any)?.pages ?? [];
+  return pages
+    .filter((p) => p.title || p.content)
     .map((p, i) => ({
-      ...p,
       title: p.title || `Página ${i + 1}`,
+      content: p.content || "",
       file: `${slugify(p.title || `pagina-${i + 1}`)}.html`,
     }));
 }
@@ -96,12 +83,7 @@ function bgStyle(section: Section, tpl: TemplateConfig, index: number): string {
 
 function cardVars(section: Section): string {
   const c = section.style.card;
-  // Productos: content.radius (px) tiene prioridad sobre el preset de estilo
-  const radius =
-    section.type === "products" && section.content.radius != null && section.content.radius !== ""
-      ? `${Number(section.content.radius)}px`
-      : ROUNDED[c.rounded];
-  return `--card-radius:${radius};--card-shadow:${c.shadow ? "0 12px 32px rgba(0,0,0,.12)" : "none"};--card-border:${
+  return `--card-radius:${cardRadiusPx(c)}px;--card-shadow:${c.shadow ? "0 12px 32px rgba(0,0,0,.12)" : "none"};--card-border:${
     c.border ? "1px solid color-mix(in srgb, var(--accent) 25%, transparent)" : "none"
   };${section.style.accentColor ? `--accent:${section.style.accentColor};` : ""}`;
 }
@@ -133,31 +115,6 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
     ${c.imageUrl ? `<img class="about__image reveal" src="${assetPath(c.imageUrl)}" alt="${esc(c.title)}">` : ""}
   </div>
 </section>`;
-
-    case "custom": {
-      const layout = c.layout ?? "text";
-      const withImage = layout === "text-image" || layout === "image-text";
-      const imageFirst = layout === "image-text";
-      const textHtml = `<div class="about__text reveal${layout === "centered" ? " about__text--center" : ""}">
-      <h2 class="section__title">${esc(c.title)}</h2><div class="section__rule"></div>
-      <p class="about__prose">${esc(c.text)}</p>
-    </div>`;
-      const imgHtml = c.imageUrl
-        ? `<img class="about__image reveal" src="${assetPath(c.imageUrl)}" alt="${esc(c.title)}">`
-        : "";
-      if (withImage) {
-        return `<section ${attrs} class="about custom">
-  <div class="container about__grid">
-    ${imageFirst ? `${imgHtml}\n    ${textHtml}` : `${textHtml}\n    ${imgHtml}`}
-  </div>
-</section>`;
-      }
-      return `<section ${attrs} class="custom">
-  <div class="container container--narrow">
-    ${textHtml}
-  </div>
-</section>`;
-    }
 
     case "products":
       return `<section ${attrs} class="products">
@@ -200,38 +157,10 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
 
     case "gallery": {
       const cols = Math.min(10, Math.max(2, Number(c.columns) || 3));
-      type GImg = {
-        url: string;
-        caption: string;
-        colSpan: number;
-        rowSpan: number;
-        objectFit: string;
-        objectPosition: string;
-      };
-      const images: GImg[] = ((c.images as any[]) ?? [])
-        .map((i: any) => {
-          if (typeof i === "string") {
-            return {
-              url: i,
-              caption: "",
-              colSpan: 1,
-              rowSpan: 1,
-              objectFit: "cover",
-              objectPosition: "center center",
-            };
-          }
-          if (!i?.url) return null;
-          return {
-            url: i.url as string,
-            caption: i.caption ? String(i.caption) : "",
-            colSpan: Math.min(cols, Math.max(1, Number(i.colSpan) || 1)),
-            rowSpan: Math.min(cols, Math.max(1, Number(i.rowSpan) || 1)),
-            objectFit: normalizeObjectFit(i.objectFit),
-            objectPosition: cssObjectPosition(normalizePosX(i.posX), normalizePosY(i.posY)),
-          };
-        })
-        .filter((i: any): i is GImg => Boolean(i?.url))
-        .slice(0, 24);
+      const images: { url: string; caption?: string }[] = ((c.images as any[]) ?? [])
+        .map((i: any) => (typeof i === "string" ? { url: i } : i))
+        .filter((i: any) => i?.url)
+        .slice(0, cols * cols);
       const gapX = Number(c.gapX ?? 12);
       const gapY = Number(c.gapY ?? 12);
       const borderWidth = Number(c.borderWidth ?? 0);
@@ -239,49 +168,19 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
       const fx = ["zoom", "lift", "gray", "dark"].includes(c.hoverEffect) ? c.hoverEffect : c.hoverEffect === "none" ? "none" : "zoom";
       const cap = ["none", "always"].includes(c.captionMode) ? c.captionMode : "hover";
       const radius = Number(c.radius ?? 16);
-      const maxWidthRaw = c.maxWidth;
-      const maxWidth =
-        maxWidthRaw === undefined ||
-        maxWidthRaw === null ||
-        maxWidthRaw === "" ||
-        maxWidthRaw === "full" ||
-        maxWidthRaw === 0 ||
-        maxWidthRaw === "0"
-          ? 0
-          : Math.min(1400, Math.max(320, Number(maxWidthRaw) || 960));
-      const maxCell = Math.min(600, Math.max(0, Number(c.maxCell ?? 300)));
-      const rowTrack = maxCell > 0 ? maxCell : Math.min(220, Math.max(100, Number(c.rowHeight ?? 160) || 160));
-      const colsRule = maxCell
-        ? `repeat(${cols},minmax(0,${maxCell}px))`
-        : `repeat(${cols},minmax(0,1fr))`;
-      const gridStyle = [
-        `grid-template-columns:${colsRule}`,
-        `grid-auto-rows:${rowTrack}px`,
-        "grid-auto-flow:dense",
-        `column-gap:${gapX}px`,
-        `row-gap:${gapY}px`,
-        maxCell ? "justify-content:center" : "",
-        "width:100%",
-        maxWidth > 0 ? `max-width:${maxWidth}px` : "",
-        "margin-left:auto",
-        "margin-right:auto",
-      ]
-        .filter(Boolean)
-        .join(";");
+      const gridStyle = `grid-template-columns:repeat(${cols},1fr);column-gap:${gapX}px;row-gap:${gapY}px;`;
+      const imgStyle = ` style="border-radius:${radius}px;${borderWidth ? `border:${borderWidth}px solid ${borderColor};` : ""}"`;
       return `<section ${attrs} class="gallery-section">
   <div class="container">
     <h2 class="section__title section__title--center reveal">${esc(c.title)}</h2>
     <div class="gallery gallery--fx-${fx} gallery--cap-${cap}" style="${gridStyle}">
       ${images
-        .map((img) => {
-          const imgStyle = ` style="border-radius:${radius}px;object-fit:${img.objectFit};object-position:${img.objectPosition};${
-            borderWidth ? `border:${borderWidth}px solid ${borderColor};` : ""
-          }"`;
-          return `<figure class="gallery__item reveal" style="border-radius:${radius}px;grid-column:span ${img.colSpan};grid-row:span ${img.rowSpan}">
+        .map(
+          (img) => `<figure class="gallery__item reveal" style="border-radius:${radius}px">
         <img class="gallery__image" src="${assetPath(img.url)}" alt="${esc(img.caption ?? "")}" loading="lazy"${imgStyle}>
         ${img.caption ? `<figcaption class="gallery__caption" style="border-radius:0 0 ${radius}px ${radius}px">${esc(img.caption)}</figcaption>` : ""}
-      </figure>`;
-        })
+      </figure>`
+        )
         .join("\n")}
     </div>
   </div>
@@ -289,22 +188,10 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
     }
 
     case "carousel": {
-      type CImg = { url: string; caption: string; objectFit: string; objectPosition: string };
-      const images: CImg[] = [];
-      for (const i of (c.images as any[]) ?? []) {
-        if (images.length >= 15) break;
-        if (typeof i === "string") {
-          if (i) images.push({ url: i, caption: "", objectFit: "cover", objectPosition: "center center" });
-          continue;
-        }
-        if (!i?.url) continue;
-        images.push({
-          url: String(i.url),
-          caption: i.caption ? String(i.caption) : "",
-          objectFit: normalizeObjectFit(i.objectFit),
-          objectPosition: cssObjectPosition(normalizePosX(i.posX), normalizePosY(i.posY)),
-        });
-      }
+      const images: { url: string; caption?: string }[] = ((c.images as any[]) ?? [])
+        .map((i: any) => (typeof i === "string" ? { url: i } : i))
+        .filter((i: any) => i?.url)
+        .slice(0, 15);
       if (images.length === 0) return "";
       const interval = Math.min(10, Math.max(2, Number(c.interval) || 4)) * 1000;
       const height = Math.min(640, Math.max(200, Number(c.height) || 400));
@@ -317,7 +204,7 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
         ${images
           .map(
             (img) => `<div class="carousel__slide" style="height:${height}px">
-          <img class="carousel__image" src="${assetPath(img.url)}" alt="${esc(img.caption ?? "")}" loading="lazy" style="object-fit:${img.objectFit};object-position:${img.objectPosition}">
+          <img class="carousel__image" src="${assetPath(img.url)}" alt="${esc(img.caption ?? "")}" loading="lazy">
           ${img.caption ? `<p class="carousel__caption">${esc(img.caption)}</p>` : ""}
         </div>`
           )
@@ -337,32 +224,14 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
 </section>`;
     }
 
-    case "iframe": {
-      const src = normalizeIframeSrc(c.url);
-      const height = Math.min(900, Math.max(200, Number(c.height) || 480));
-      const narrow = c.width === "narrow";
-      return `<section ${attrs} class="iframe-section">
-  <div class="container${narrow ? " container--narrow" : ""}">
-    ${c.title ? `<h2 class="section__title section__title--center reveal">${esc(c.title)}</h2>` : ""}
-    ${
-      src
-        ? `<iframe class="iframe-section__frame reveal" src="${esc(src)}" title="${esc(c.title || "Contenido embebido")}" style="height:${height}px" loading="lazy" referrerpolicy="no-referrer-when-downgrade" allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>`
-        : ""
-    }
-  </div>
-</section>`;
-    }
-
-    case "map": {
-      const mapSrc = normalizeMapEmbedUrl(c.embedUrl) || normalizeMapEmbedUrl(c.address);
+    case "map":
       return `<section ${attrs} class="map">
   <div class="container container--center">
     <h2 class="section__title reveal">${esc(c.title)}</h2>
     ${c.address ? `<p class="section__lead">${esc(c.address)}</p>` : ""}
-    ${mapSrc ? `<iframe class="map__frame reveal" src="${esc(mapSrc)}" loading="lazy" referrerpolicy="no-referrer-when-downgrade" allowfullscreen title="Mapa"></iframe>` : ""}
+    ${c.embedUrl ? `<iframe class="map__frame reveal" src="${esc(c.embedUrl)}" loading="lazy" title="Mapa"></iframe>` : ""}
   </div>
 </section>`;
-    }
 
     case "faq":
       return `<section ${attrs} class="faq">
@@ -394,78 +263,18 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
 </section>`;
 
     case "quote": {
-      const currency = esc(c.currency ?? "$");
-      const base = Number(c.basePrice) || 0;
-      // Categorías nuevas o compat options[]
-      let categories: { name: string; mode: string; products: { name: string; price: number; description: string }[] }[] = [];
-      if (Array.isArray(c.categories) && c.categories.length > 0) {
-        categories = c.categories.map((cat: any) => ({
-          name: String(cat?.name ?? "Categoría"),
-          mode: cat?.mode === "single" ? "single" : "multi",
-          products: Array.isArray(cat?.products)
-            ? cat.products.map((p: any) => ({
-                name: String(p?.name ?? "Producto"),
-                price: Number(p?.price) || 0,
-                description: String(p?.description ?? ""),
-              }))
-            : [],
-        }));
-      } else if (Array.isArray(c.options) && c.options.length > 0) {
-        categories = [
-          {
-            name: "Opciones",
-            mode: "multi",
-            products: c.options.map((o: any) => ({
-              name: String(o?.label ?? o?.name ?? "Opción"),
-              price: Number(o?.price) || 0,
-              description: "",
-            })),
-          },
-        ];
-      }
-      const catsHtml = categories
-        .map((cat, ci) => {
-          const productsHtml = cat.products
-            .map((p, pi) => {
-              if (cat.mode === "single") {
-                return `<div class="quote__product" data-price="${p.price}">
-          <div class="quote__product-info">
-            <span class="quote__product-name">${esc(p.name)}</span>
-            ${p.description ? `<span class="quote__product-desc">${esc(p.description)}</span>` : ""}
-            <span class="quote__product-unit">${currency}${p.price} c/u</span>
-          </div>
-          <label class="quote__pick"><input type="radio" name="quote-${section.id}-c${ci}" data-cat="${ci}" data-price="${p.price}" data-mode="single"> Elegir</label>
-        </div>`;
-              }
-              return `<div class="quote__product" data-price="${p.price}">
-          <div class="quote__product-info">
-            <span class="quote__product-name">${esc(p.name)}</span>
-            ${p.description ? `<span class="quote__product-desc">${esc(p.description)}</span>` : ""}
-            <span class="quote__product-unit">${currency}${p.price} c/u</span>
-          </div>
-          <div class="quote__qty" data-mode="multi">
-            <button type="button" class="quote__qty-btn" data-delta="-1" aria-label="Menos">−</button>
-            <input class="quote__qty-input" type="number" min="0" max="99" value="0" data-price="${p.price}" data-cat="${ci}" data-mode="multi" readonly>
-            <button type="button" class="quote__qty-btn" data-delta="1" aria-label="Más">+</button>
-          </div>
-        </div>`;
-            })
-            .join("\n");
-          return `<div class="quote__category" data-cat="${ci}" data-mode="${cat.mode}">
-        <h3 class="quote__category-title">${esc(cat.name)}</h3>
-        <p class="quote__category-hint">${cat.mode === "single" ? "Elige un producto" : "Puedes combinar varios y definir cantidades"}</p>
-        ${productsHtml}
-      </div>`;
-        })
-        .join("\n");
+      const options: any[] = c.options ?? [];
       return `<section ${attrs} class="quote">
   <div class="container container--narrow">
     <h2 class="section__title section__title--center reveal">${esc(c.title)}</h2>
-    ${c.subtitle ? `<p class="section__lead section__lead--center">${esc(c.subtitle)}</p>` : ""}
-    <div class="card card__body quote__box reveal" data-quote data-base="${base}" data-currency="${currency}">
-      ${base > 0 ? `<p class="quote__base">Precio base: ${currency}${base}</p>` : ""}
-      ${catsHtml}
-      <div class="quote__total"><span>Total estimado</span><span class="quote__total-amount" data-total>${currency}${base}</span></div>
+    <div class="card card__body quote__box reveal" data-quote data-base="${Number(c.basePrice) || 0}">
+      <p class="quote__base">Precio base: $${Number(c.basePrice) || 0}</p>
+      ${options
+        .map(
+          (o: any) => `<label class="quote__option"><span class="quote__option-label"><input type="checkbox" data-price="${Number(o.price) || 0}"> ${esc(o.label)}</span><b class="quote__option-price">+$${Number(o.price) || 0}</b></label>`
+        )
+        .join("\n")}
+      <div class="quote__total"><span>Total estimado</span><span class="quote__total-amount" data-total>$${Number(c.basePrice) || 0}</span></div>
     </div>
   </div>
 </section>`;
@@ -476,15 +285,13 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
   }
 }
 
-function headerHtml(config: SiteConfig, sections: Section[], pages: ExtraPageExport[], onSubpage: boolean): string {
+function headerHtml(config: SiteConfig, sections: Section[], pages: ExtraPage[], onSubpage: boolean): string {
+  const prefix = onSubpage ? "index.html" : "";
   const navLinks = [
-    // En subpáginas, un enlace "Inicio" en lugar de anclas de la home
-    ...(onSubpage
-      ? [{ href: "index.html", label: "Inicio" }]
-      : sections.filter((s) => s.inMenu).map((s) => ({
-          href: `#${s.id}`,
-          label: (s.content.title as string) || SECTION_LABELS[s.type],
-        }))),
+    ...sections.filter((s) => s.inMenu).map((s) => ({
+      href: `${prefix}#${s.id}`,
+      label: (s.content.title as string) || SECTION_LABELS[s.type],
+    })),
     ...pages.map((p) => ({ href: p.file, label: p.title })),
   ];
   const links = () => navLinks.map((l) => `<a class="nav__link" href="${esc(l.href)}">${esc(l.label)}</a>`).join(`\n        `);
@@ -533,20 +340,15 @@ function footerHtml(config: SiteConfig): string {
 }
 
 function whatsappHtml(config: SiteConfig): string {
-  const wa = config.whatsapp;
-  if (!wa.enabled || !wa.number) return "";
-  return `<a class="wa-button" aria-label="WhatsApp" target="_blank" rel="noreferrer" href="https://wa.me/${wa.number.replace(/\D/g, "")}?text=${encodeURIComponent(wa.defaultMessage)}">
+  if (!config.whatsapp.enabled) return "";
+  const href = businessWhatsAppUrl(config);
+  if (!href) return "";
+  return `<a class="wa-button" aria-label="WhatsApp" target="_blank" rel="noreferrer" href="${esc(href)}">
     <svg viewBox="0 0 32 32" width="30" height="30" fill="#fff" aria-hidden="true"><path d="M16 3C9.4 3 4 8.3 4 14.9c0 2.6.8 5 2.3 7L4.5 28l6.3-1.7c1.6.9 3.4 1.3 5.2 1.3 6.6 0 12-5.3 12-11.9S22.6 3 16 3zm0 21.8c-1.6 0-3.2-.4-4.6-1.2l-.3-.2-3.7 1 1-3.6-.2-.3c-1.3-1.7-2-3.7-2-5.7C6.2 9.5 10.6 5.2 16 5.2s9.8 4.3 9.8 9.7-4.4 9.9-9.8 9.9zm5.4-7.3c-.3-.1-1.7-.9-2-1s-.5-.1-.7.1c-.2.3-.8 1-.9 1.2-.2.2-.3.2-.6.1s-1.2-.5-2.4-1.5c-.9-.8-1.5-1.8-1.6-2-.2-.3 0-.5.1-.6l.4-.5c.1-.2.2-.3.3-.5s0-.4 0-.5c-.1-.1-.7-1.6-.9-2.2-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.1.2 2.1 3.2 5.1 4.5.7.3 1.3.5 1.7.6.7.2 1.4.2 1.9.1.6-.1 1.7-.7 2-1.4.2-.7.2-1.3.2-1.4-.1-.1-.3-.2-.6-.4z"/></svg>
   </a>`;
 }
 
 function htmlShell(config: SiteConfig, tpl: TemplateConfig, title: string, body: string): string {
-  // Fuentes: preconnect + stylesheet (también en styles/fonts.css para editar offline)
-  const fontLinks = tpl.fonts.googleUrl
-    ? `  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="${esc(tpl.fonts.googleUrl)}" rel="stylesheet">`
-    : "";
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -555,8 +357,9 @@ function htmlShell(config: SiteConfig, tpl: TemplateConfig, title: string, body:
   <title>${esc(title)}</title>
   <meta name="description" content="${esc(config.business.tagline || config.business.name)}">
   ${config.business.faviconUrl ? `<link rel="icon" type="image/png" href="${assetPath(config.business.faviconUrl)}">` : ""}
-${fontLinks}
-  <!-- Estilos: styles.css importa cada bloque (header, hero, map…). Edita styles/fonts.css para cambiar tipografías. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="${tpl.fonts.googleUrl}" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -584,23 +387,16 @@ ${sections.map((s, i) => renderSection(s, tpl, i, config)).join("\n\n")}
     "index.html": htmlShell(config, tpl, config.business.name, indexBody),
   };
 
-  // Páginas adicionales (widget "pagina-adicional"): título + intro + secciones
+  // Páginas adicionales (widget "pagina-adicional")
   for (const page of pages) {
-    const pageSections = [...page.sections].sort((a, b) => a.order - b.order);
-    const intro =
-      page.title || page.content
-        ? `<section class="page">
-  <div class="container container--narrow">
-    <h1 class="page__title reveal">${esc(page.title)}</h1>
-    ${page.content ? `<div class="page__content reveal">${esc(page.content).replace(/\n/g, "<br>")}</div>` : ""}
-  </div>
-</section>`
-        : "";
     const body = `  ${headerHtml(config, sections, pages, true)}
 
-${intro}
-
-${pageSections.map((s, i) => renderSection(s, tpl, i, config)).join("\n\n")}
+<section class="page">
+  <div class="container container--narrow">
+    <h1 class="page__title reveal">${esc(page.title)}</h1>
+    <div class="page__content reveal">${esc(page.content).replace(/\n/g, "<br>")}</div>
+  </div>
+</section>
 
   ${footerHtml(config)}
 
@@ -608,73 +404,14 @@ ${pageSections.map((s, i) => renderSection(s, tpl, i, config)).join("\n\n")}
     files[page.file] = htmlShell(config, tpl, `${page.title} — ${config.business.name}`, body);
   }
 
-  // CSS modular: styles.css + styles/*.css
-  Object.assign(files, buildStyleBundle(config, tpl));
+  files["styles.css"] = buildCss(config, tpl);
   files["script.js"] = buildJs();
   return files;
 }
 
-/**
- * Genera styles.css (entrada) + un archivo por bloque en styles/.
- * Así se puede editar p.ej. solo styles/hero.css sin tocar el resto.
- */
-function buildStyleBundle(config: SiteConfig, tpl: TemplateConfig): Record<string, string> {
-  const modules: { file: string; css: string }[] = [
-    { file: "styles/fonts.css", css: cssFonts(tpl) },
-    { file: "styles/base.css", css: cssBase(config, tpl) },
-    { file: "styles/header.css", css: cssHeader() },
-    { file: "styles/hero.css", css: cssHero() },
-    { file: "styles/about.css", css: cssAbout() },
-    { file: "styles/products.css", css: cssProducts() },
-    { file: "styles/testimonials.css", css: cssTestimonials() },
-    { file: "styles/gallery.css", css: cssGallery() },
-    { file: "styles/carousel.css", css: cssCarousel() },
-    { file: "styles/map.css", css: cssMap() },
-    { file: "styles/iframe.css", css: cssIframe() },
-    { file: "styles/faq.css", css: cssFaq() },
-    { file: "styles/contact.css", css: cssContact() },
-    { file: "styles/quote.css", css: cssQuote() },
-    { file: "styles/page.css", css: cssPage() },
-    { file: "styles/footer.css", css: cssFooter() },
-    { file: "styles/whatsapp.css", css: cssWhatsapp() },
-    { file: "styles/reveal.css", css: cssReveal() },
-  ];
-
-  const entry = `/* ${config.business.name} — generado por Sitios Web Express
- * Entrada de estilos. Cada bloque vive en styles/<nombre>.css
- * Tipografías: edita styles/fonts.css (código de Google Fonts).
- * Convención de clases: BEM (bloque__elemento--modificador).
- */
-${modules.map((m) => `@import url("${m.file}");`).join("\n")}
-`;
-
-  const out: Record<string, string> = { "styles.css": entry };
-  for (const m of modules) out[m.file] = m.css;
-  return out;
-}
-
-function cssFonts(tpl: TemplateConfig): string {
-  const url = tpl.fonts.googleUrl || "";
-  return `/* Tipografías del sitio
- * - Cambia los nombres en --font-heading / --font-body (también en base.css vía :root).
- * - Para otras fuentes de Google Fonts:
- *   1) Ve a https://fonts.google.com y elige familias
- *   2) Copia la URL del embed (css2?family=...)
- *   3) Sustituye la línea @import de abajo
- *   4) Actualiza --font-heading y --font-body en styles/base.css
- */
-${url ? `@import url("${url}");` : "/* Sin URL de Google Fonts — define fuentes del sistema en base.css */"}
-
-/* Alias locales (base.css redefine :root con la paleta; estos sirven de documentación) */
-:root {
-  --font-heading: '${tpl.fonts.heading}', serif;
-  --font-body: '${tpl.fonts.body}', system-ui, sans-serif;
-}
-`;
-}
-
-function cssBase(config: SiteConfig, tpl: TemplateConfig): string {
-  return `/* Base + variables de marca — ${esc(config.business.name)} */
+function buildCss(config: SiteConfig, tpl: TemplateConfig): string {
+  return `/* ${esc(config.business.name)} — generado por Sitios Web Express
+   Convención de clases: BEM (bloque__elemento--modificador, estados .is-*) */
 :root {
   --primary: ${tpl.palette.primary};
   --secondary: ${tpl.palette.secondary};
@@ -693,99 +430,62 @@ img { max-width: 100%; display: block; }
 h1, h2, h3 { font-family: var(--font-heading); line-height: 1.15; letter-spacing: -0.01em; }
 section { padding: 6rem 0; }
 
+/* Layout */
 .container { max-width: 1100px; margin: 0 auto; padding: 0 1.5rem; }
 .container--narrow { max-width: 720px; }
 .container--center { text-align: center; }
 
+/* Bloque: section (títulos comunes) */
 .section__title { font-size: clamp(1.8rem, 4vw, 2.6rem); }
 .section__title--center { text-align: center; }
 .section__lead { font-size: 1.15rem; opacity: .8; max-width: 42rem; margin: 1.2rem auto 0; }
 .section__lead--center { text-align: center; }
 .section__rule { width: 64px; height: 4px; border-radius: 2px; background: var(--accent); margin-top: .6rem; }
 
+/* Bloque: button */
 .button { display: inline-block; padding: 1rem 2.6rem; border: 0; border-radius: 999px; background: var(--accent); color: #fff; font-family: var(--font-body); font-size: 1.05rem; font-weight: 600; text-decoration: none; cursor: pointer; box-shadow: 0 10px 30px color-mix(in srgb, var(--accent) 35%, transparent); transition: transform .2s; }
 .button:hover, .button:focus-visible { transform: scale(1.05); }
-`;
-}
 
-function cssHeader(): string {
-  return `/* Header + navegación */
+/* Bloque: header */
 .header { position: sticky; top: 0; z-index: 40; background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid color-mix(in srgb, var(--text) 8%, transparent); }
 .header__inner { display: flex; align-items: center; justify-content: space-between; padding-top: .9rem; padding-bottom: .9rem; }
 .header__brand { text-decoration: none; }
 .header__logo { height: 42px; width: auto; object-fit: contain; }
 .header__logo-text { font-family: var(--font-heading); font-weight: 700; font-size: 1.2rem; color: var(--primary); }
-.header__burger {
-  display: none;
-  position: relative;
-  background: none;
-  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
-  border-radius: 10px;
-  cursor: pointer;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  flex-shrink: 0;
-}
-.header__burger-line {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 20px;
-  height: 2px;
-  margin: 0;
-  background: var(--text);
-  border-radius: 1px;
-  transition: transform .28s ease, opacity .2s ease;
-  transform: translate(-50%, -50%);
-}
-.header__burger-line:nth-child(1) { transform: translate(-50%, calc(-50% - 7px)); }
-.header__burger-line:nth-child(2) { transform: translate(-50%, -50%); }
-.header__burger-line:nth-child(3) { transform: translate(-50%, calc(-50% + 7px)); }
-.header__burger[aria-expanded="true"] .header__burger-line:nth-child(1) { transform: translate(-50%, -50%) rotate(45deg); }
+.header__burger { display: none; background: none; border: 0; cursor: pointer; width: 42px; height: 42px; flex-direction: column; align-items: center; justify-content: center; gap: 5px; }
+.header__burger-line { width: 24px; height: 2px; background: var(--text); transition: transform .3s, opacity .3s; }
+.header__burger[aria-expanded="true"] .header__burger-line:nth-child(1) { transform: translateY(7px) rotate(45deg); }
 .header__burger[aria-expanded="true"] .header__burger-line:nth-child(2) { opacity: 0; }
-.header__burger[aria-expanded="true"] .header__burger-line:nth-child(3) { transform: translate(-50%, -50%) rotate(-45deg); }
+.header__burger[aria-expanded="true"] .header__burger-line:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
 
+/* Bloque: nav */
 .nav--desktop { display: flex; gap: 1.6rem; }
 .nav__link { color: var(--text); text-decoration: none; font-size: .92rem; font-weight: 500; opacity: .8; transition: opacity .2s; }
 .nav__link:hover, .nav__link:focus-visible { opacity: 1; }
-.nav--mobile { display: none; flex-direction: column; background: var(--surface); max-height: 0; overflow: hidden; transition: max-height .35s ease; border-top: 0 solid transparent; }
-.nav--mobile.is-open { max-height: min(70vh, 480px); overflow-y: auto; border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent); }
-.nav--mobile .nav__link { padding: .85rem 1.1rem; margin: .15rem .5rem; border-radius: 10px; border-top: 0; }
-.nav--mobile .nav__link:hover, .nav--mobile .nav__link:focus-visible { background: color-mix(in srgb, var(--text) 6%, transparent); opacity: 1; }
+.nav--mobile { display: none; flex-direction: column; background: var(--surface); max-height: 0; overflow: hidden; transition: max-height .35s ease; }
+.nav--mobile.is-open { max-height: 420px; }
+.nav--mobile .nav__link { padding: .9rem 1.5rem; border-top: 1px solid color-mix(in srgb, var(--text) 6%, transparent); }
 @media (max-width: 768px) {
   .nav--desktop { display: none; }
-  .header__burger { display: inline-flex; align-items: center; justify-content: center; }
+  .header__burger { display: flex; }
   .nav--mobile { display: flex; }
   section { padding: 4rem 0; }
 }
-`;
-}
 
-function cssHero(): string {
-  return `/* Hero */
+/* Bloque: hero */
 .hero { padding: 9rem 0; }
 .hero__inner { text-align: center; }
 .hero__title { font-size: clamp(2.5rem, 7vw, 4.5rem); }
 .hero__subtitle { font-size: 1.15rem; opacity: .8; max-width: 42rem; margin: 1.2rem auto 0; }
 .hero__cta { margin-top: 2.2rem; }
-`;
-}
 
-function cssAbout(): string {
-  return `/* About / personalizada */
+/* Bloque: about */
 .about__grid { display: grid; gap: 3rem; align-items: center; }
 @media (min-width: 768px) { .about__grid { grid-template-columns: 1fr 1fr; } }
 .about__prose { margin-top: 1.4rem; white-space: pre-line; opacity: .88; }
 .about__image { border-radius: 24px; object-fit: cover; max-height: 420px; width: 100%; }
-.about__text--center { text-align: center; }
-.about__text--center .section__rule { margin-left: auto; margin-right: auto; }
-.about__text--center .about__prose { max-width: 42rem; margin-left: auto; margin-right: auto; }
-`;
-}
 
-function cssProducts(): string {
-  return `/* Productos / tarjetas genéricas */
+/* Bloque: cards / card */
 .cards { display: grid; gap: 2rem; margin-top: 3rem; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .cards--two { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
 .card { background: var(--surface); color: var(--text); border-radius: var(--card-radius, 20px); box-shadow: var(--card-shadow); border: var(--card-border); overflow: hidden; transition: transform .25s; }
@@ -796,26 +496,22 @@ function cssProducts(): string {
 .card__title { font-size: 1.15rem; }
 .card__text { margin-top: .5rem; font-size: .92rem; opacity: .78; }
 .card__price { margin-top: 1rem; font-size: 1.3rem; font-weight: 700; color: var(--accent); }
-`;
-}
 
-function cssTestimonials(): string {
-  return `/* Testimonios */
+/* Bloque: testimonial */
 .testimonial__mark { font-size: 2.6rem; line-height: 1; color: var(--accent); }
 .testimonial__text { font-style: italic; opacity: .88; }
 .testimonial__author { margin-top: 1rem; font-size: .9rem; }
-`;
-}
 
-function cssGallery(): string {
-  return `/* Galería (grid bento; spans y gaps inline desde el builder) */
-.gallery { display: grid; margin-top: 3rem; grid-auto-flow: dense; }
-.gallery__item { position: relative; overflow: hidden; border-radius: 16px; margin: 0; min-width: 0; min-height: 0; width: 100%; height: 100%; background: rgba(0,0,0,.06); }
-.gallery__image { width: 100%; height: 100%; object-fit: cover; object-position: center center; display: block; border-radius: 16px; transition: transform .35s ease, filter .35s ease; }
+/* Bloque: gallery (cuadrícula, espaciados y borde van inline desde el builder) */
+.gallery { display: grid; margin-top: 3rem; }
+.gallery__item { position: relative; overflow: hidden; border-radius: 16px; margin: 0; }
+.gallery__image { aspect-ratio: 1; width: 100%; object-fit: cover; display: block; border-radius: 16px; transition: transform .35s ease, filter .35s ease; }
 .gallery__caption { position: absolute; left: 0; right: 0; bottom: 0; padding: .9rem; color: #fff; font-size: .85rem; background: linear-gradient(transparent, rgba(0,0,0,.75)); border-radius: 0 0 16px 16px; transition: opacity .3s; }
+/* Modificadores: texto sobre la imagen */
 .gallery--cap-hover .gallery__caption { opacity: 0; }
 .gallery--cap-hover .gallery__item:hover .gallery__caption { opacity: 1; }
 .gallery--cap-none .gallery__caption { display: none; }
+/* Modificadores: efecto hover */
 .gallery--fx-zoom .gallery__item:hover .gallery__image { transform: scale(1.07); }
 .gallery--fx-lift .gallery__item { transition: transform .3s, box-shadow .3s; }
 .gallery--fx-lift .gallery__item:hover { transform: translateY(-6px); box-shadow: 0 16px 32px rgba(0,0,0,.25); }
@@ -823,19 +519,13 @@ function cssGallery(): string {
 .gallery--fx-gray .gallery__item:hover .gallery__image { filter: grayscale(0); }
 .gallery--fx-dark .gallery__image { filter: brightness(.72); }
 .gallery--fx-dark .gallery__item:hover .gallery__image { filter: brightness(1); }
-@media (max-width: 640px) {
-  .gallery { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
-  .gallery__item { grid-column: span 1 !important; grid-row: span 1 !important; }
-}
-`;
-}
+@media (max-width: 640px) { .gallery { grid-template-columns: repeat(2, 1fr) !important; } }
 
-function cssCarousel(): string {
-  return `/* Carrusel */
+/* Bloque: carousel (autoplay via script.js) */
 .carousel { position: relative; overflow: hidden; margin-top: 2rem; }
 .carousel__track { display: flex; transition: transform .7s ease; }
-.carousel__slide { position: relative; min-width: 100%; background: rgba(0,0,0,.06); }
-.carousel__image { width: 100%; height: 100%; object-fit: cover; object-position: center center; display: block; }
+.carousel__slide { position: relative; min-width: 100%; }
+.carousel__image { width: 100%; height: 100%; object-fit: cover; display: block; }
 .carousel__caption { position: absolute; left: 0; right: 0; bottom: 0; padding: 1.2rem; color: #fff; font-size: .9rem; background: linear-gradient(transparent, rgba(0,0,0,.75)); }
 .carousel__arrow { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,.4); color: #fff; border: 0; border-radius: 999px; padding: .4rem .8rem; font-size: 1.2rem; cursor: pointer; transition: background .2s; }
 .carousel__arrow:hover { background: rgba(0,0,0,.6); }
@@ -845,74 +535,35 @@ function cssCarousel(): string {
 .carousel__dot { width: 8px; height: 8px; border-radius: 999px; border: 0; padding: 0; background: rgba(255,255,255,.45); cursor: pointer; transition: all .25s; }
 .carousel__dot.is-active { width: 16px; background: #fff; }
 @media (max-width: 640px) { .carousel__slide { height: 240px !important; } }
-`;
-}
 
-function cssMap(): string {
-  return `/* Mapa */
+/* Bloque: map */
 .map__frame { width: 100%; height: 380px; border: 0; border-radius: 20px; margin-top: 2rem; }
-`;
-}
 
-function cssIframe(): string {
-  return `/* Iframe / embed genérico */
-.iframe-section { padding: 4rem 0; }
-.iframe-section__frame { width: 100%; border: 0; border-radius: 16px; margin-top: 1.5rem; background: rgba(0,0,0,.04); display: block; }
-`;
-}
-
-function cssFaq(): string {
-  return `/* FAQ */
+/* Bloque: faq */
 .faq__item { margin-top: 1rem; }
 .faq__question { cursor: pointer; font-weight: 600; list-style: none; }
 .faq__plus { color: var(--accent); margin-right: .5rem; }
 .faq__answer { margin-top: .8rem; }
-`;
-}
 
-function cssContact(): string {
-  return `/* Formulario de contacto */
+/* Bloque: form */
 .form { display: grid; gap: 1rem; margin-top: 2.5rem; }
 .form__input, .form__textarea { width: 100%; padding: .85rem 1rem; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--text) 20%, transparent); background: transparent; color: inherit; font-family: inherit; font-size: .95rem; }
 .form__input:focus, .form__textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .form__submit { margin-top: .4rem; width: 100%; }
-`;
-}
 
-function cssQuote(): string {
-  return `/* Cotizador */
+/* Bloque: quote (cotizador) */
 .quote__box { margin-top: 2.5rem; }
-.quote__base { color: var(--muted); font-size: .9rem; margin-bottom: 1rem; }
-.quote__category { margin-top: 1.5rem; }
-.quote__category:first-of-type { margin-top: .5rem; }
-.quote__category-title { font-size: .95rem; font-weight: 600; opacity: .9; }
-.quote__category-hint { font-size: .75rem; opacity: .5; margin: .15rem 0 .6rem; }
-.quote__product { display: flex; flex-wrap: wrap; gap: .75rem; justify-content: space-between; align-items: center; padding: .85rem 1rem; margin-top: .55rem; border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); border-radius: 10px; font-size: .95rem; }
-.quote__product-info { display: flex; flex-direction: column; gap: .15rem; min-width: 0; flex: 1; }
-.quote__product-name { font-weight: 500; }
-.quote__product-desc { font-size: .8rem; opacity: .6; }
-.quote__product-unit { font-size: .85rem; font-weight: 600; color: var(--accent); }
-.quote__pick { display: flex; align-items: center; gap: .4rem; font-size: .85rem; cursor: pointer; opacity: .8; }
-.quote__qty { display: inline-flex; align-items: center; border: 1px solid color-mix(in srgb, var(--text) 20%, transparent); border-radius: 10px; overflow: hidden; }
-.quote__qty-btn { border: 0; background: transparent; color: inherit; padding: .4rem .75rem; font-size: 1.1rem; cursor: pointer; line-height: 1; opacity: .75; }
-.quote__qty-btn:hover { opacity: 1; }
-.quote__qty-input { width: 2.2rem; border: 0; background: transparent; text-align: center; font-weight: 600; font-size: .9rem; color: inherit; -moz-appearance: textfield; }
-.quote__qty-input::-webkit-outer-spin-button, .quote__qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.quote__base { color: var(--muted); font-size: .9rem; }
+.quote__option { display: flex; justify-content: space-between; align-items: center; padding: .8rem 1rem; margin-top: .7rem; border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); border-radius: 10px; cursor: pointer; font-size: .95rem; }
 .quote__total { display: flex; justify-content: space-between; align-items: center; margin-top: 1.4rem; padding-top: 1rem; border-top: 1px solid color-mix(in srgb, var(--text) 10%, transparent); font-weight: 600; }
 .quote__total-amount { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
-`;
-}
 
-function cssPage(): string {
-  return `/* Páginas adicionales */
+/* Bloque: page (páginas adicionales) */
 .page { min-height: 55vh; }
-.page__title { font-size: clamp(2rem, 5vw, 3.2rem); text-align: center; }
-.page__content { margin-top: 1.6rem; opacity: .88; text-align: center; max-width: 42rem; margin-left: auto; margin-right: auto; }
-`;
-}
+.page__title { font-size: clamp(2rem, 5vw, 3.2rem); }
+.page__content { margin-top: 1.6rem; opacity: .88; }
 
-function cssFooter(): string {
-  return `/* Footer */
+/* Bloque: footer */
 .footer { background: color-mix(in srgb, var(--text) 92%, black); color: var(--bg); font-size: .9rem; }
 .footer__inner { display: flex; flex-direction: column; align-items: center; gap: 1.4rem; padding: 3rem 1.5rem; text-align: center; }
 @media (min-width: 768px) { .footer__inner { flex-direction: row; justify-content: space-between; text-align: left; } }
@@ -920,18 +571,12 @@ function cssFooter(): string {
 .footer__social { display: flex; gap: 1.2rem; }
 .footer__social-link { color: inherit; text-transform: capitalize; }
 .footer__copyright { opacity: .6; }
-`;
-}
 
-function cssWhatsapp(): string {
-  return `/* Botón flotante WhatsApp */
+/* Bloque: wa-button (WhatsApp flotante) */
 .wa-button { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 50; width: 56px; height: 56px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: #25D366; box-shadow: 0 8px 24px rgba(0,0,0,.3); transition: transform .2s; }
 .wa-button:hover { transform: scale(1.1); }
-`;
-}
 
-function cssReveal(): string {
-  return `/* Animación al scroll */
+/* Utilidad: reveal (animación al hacer scroll) */
 .reveal { opacity: 0; transform: translateY(24px); transition: opacity .6s ease, transform .6s ease; }
 .reveal.is-visible { opacity: 1; transform: none; }
 @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } }
@@ -948,13 +593,11 @@ function buildJs(): string {
     burger.addEventListener('click', function () {
       var open = mobileNav.classList.toggle('is-open');
       burger.setAttribute('aria-expanded', String(open));
-      burger.setAttribute('aria-label', open ? 'Cerrar menú' : 'Abrir menú');
     });
     mobileNav.querySelectorAll('.nav__link').forEach(function (a) {
       a.addEventListener('click', function () {
         mobileNav.classList.remove('is-open');
         burger.setAttribute('aria-expanded', 'false');
-        burger.setAttribute('aria-label', 'Abrir menú');
       });
     });
   }
@@ -993,39 +636,18 @@ function buildJs(): string {
     play();
   });
 
-  // Calculadora de cotización (categorías + cantidad / radio)
+  // Calculadora de cotización
   document.querySelectorAll('[data-quote]').forEach(function (box) {
     var base = Number(box.getAttribute('data-base')) || 0;
-    var currency = box.getAttribute('data-currency') || '$';
-    var totalEl = box.querySelector('[data-total]');
-    function money(n) { return currency + Number(n).toLocaleString('es-MX'); }
+    var total = box.querySelector('[data-total]');
     function recalc() {
       var sum = base;
-      box.querySelectorAll('.quote__qty-input').forEach(function (inp) {
-        var q = Math.max(0, Number(inp.value) || 0);
-        sum += q * (Number(inp.getAttribute('data-price')) || 0);
+      box.querySelectorAll('input[type=checkbox]:checked').forEach(function (cb) {
+        sum += Number(cb.getAttribute('data-price')) || 0;
       });
-      box.querySelectorAll('input[type=radio][data-mode=single]:checked').forEach(function (rb) {
-        sum += Number(rb.getAttribute('data-price')) || 0;
-      });
-      if (totalEl) totalEl.textContent = money(sum);
+      if (total) total.textContent = '$' + sum;
     }
-    box.querySelectorAll('.quote__qty').forEach(function (wrap) {
-      var inp = wrap.querySelector('.quote__qty-input');
-      if (!inp) return;
-      wrap.querySelectorAll('.quote__qty-btn').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var delta = Number(btn.getAttribute('data-delta')) || 0;
-          var next = Math.max(0, Math.min(99, (Number(inp.value) || 0) + delta));
-          inp.value = String(next);
-          recalc();
-        });
-      });
-    });
-    box.querySelectorAll('input[type=radio][data-mode=single]').forEach(function (rb) {
-      rb.addEventListener('change', recalc);
-    });
-    recalc();
+    box.querySelectorAll('input[type=checkbox]').forEach(function (cb) { cb.addEventListener('change', recalc); });
   });
 })();
 `;

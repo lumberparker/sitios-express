@@ -46,8 +46,7 @@ export function computeInvoice(
     items.push({ label: widget.name, qty, unitPrice: widget.price, subtotal: widget.price * qty });
   }
 
-  // Secciones extra en la página de inicio sin widget asociado (las de páginas
-  // adicionales van incluidas en el precio por página).
+  // Secciones extra agregadas sin pasar por un widget del catálogo
   const widgetSectionTypes = new Set(
     config.widgets.map((w) => bySlug.get(w.widgetId)?.sectionType).filter(Boolean)
   );
@@ -62,20 +61,6 @@ export function computeInvoice(
       unitPrice: generic.price,
       subtotal: generic.price * extraSections.length,
     });
-  }
-
-  // Si un tipo de widget se usa solo en páginas extra (no en inicio), igual
-  // factura el widget una vez (el usuario está usando esa funcionalidad).
-  for (const w of catalog) {
-    if (!w.sectionType || counts.has(w.slug)) continue;
-    const usedOnPages = config.widgets
-      .find((x) => x.widgetId === "pagina-adicional")
-      ?.config as { pages?: { sections?: { type: string }[] }[] } | undefined;
-    const pages = usedOnPages?.pages ?? [];
-    const used = pages.some((p) => (p.sections ?? []).some((s) => s.type === w.sectionType));
-    if (used) {
-      items.push({ label: w.name, qty: 1, unitPrice: w.price, subtotal: w.price });
-    }
   }
 
   return { lineItems: items, total: items.reduce((acc, i) => acc + i.subtotal, 0) };

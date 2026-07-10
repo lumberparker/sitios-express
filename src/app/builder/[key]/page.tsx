@@ -15,6 +15,7 @@ export default async function BuilderPage({ params }: { params: { key: string } 
     <BuilderClient
       siteKey={site.editKey}
       siteStatus={site.status}
+      paidTotal={site.invoice?.paidTotal ?? 0}
       initialConfig={SiteConfigSchema.parse(site.config)}
       templateConfig={TemplateConfigSchema.parse(site.template.config)}
       template={{ name: site.template.name, basePrice: site.template.basePrice }}

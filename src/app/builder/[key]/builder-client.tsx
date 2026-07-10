@@ -7,19 +7,9 @@ import { SiteRenderer } from "@/components/site/SiteRenderer";
 import { computeInvoice, BASE_SECTIONS, type LineItem } from "@/lib/pricing";
 import { formatMoney } from "@/lib/utils";
 import {
-  getExtraPages,
+  cardRadiusPx,
   makeSection,
-  normalizeExtraPages,
-  normalizeObjectFit,
-  normalizePosX,
-  normalizePosY,
-  pageId,
-  REPEATABLE_SECTIONS,
   SECTION_LABELS,
-  type ExtraPage,
-  type ImagePosX,
-  type ImagePosY,
-  type ObjectFitMode,
   type Section,
   type SectionType,
   type SiteConfig,
@@ -38,6 +28,7 @@ type CatalogWidget = {
 export function BuilderClient({
   siteKey,
   siteStatus,
+  paidTotal: initialPaidTotal,
   initialConfig,
   templateConfig,
   template,
@@ -45,6 +36,7 @@ export function BuilderClient({
 }: {
   siteKey: string;
   siteStatus: string;
+  paidTotal: number;
   initialConfig: SiteConfig;
   templateConfig: TemplateConfig;
   template: { name: string; basePrice: number };
@@ -52,19 +44,12 @@ export function BuilderClient({
 }) {
   const [config, setConfig] = useState<SiteConfig>(initialConfig);
   const [status, setStatus] = useState(siteStatus);
+  const [paidTotal, setPaidTotal] = useState(initialPaidTotal);
   const [tab, setTab] = useState<"secciones" | "widgets" | "negocio">("secciones");
-  /** "home" = página de inicio; id de ExtraPage = subpágina. */
-  const [editingPageId, setEditingPageId] = useState<string>("home");
-  /** En móvil: alternar panel de edición vs vista previa */
-  const [mobilePane, setMobilePane] = useState<"edit" | "preview">("edit");
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [error, setError] = useState("");
   const [linkCopied, setLinkCopied] = useState(false);
-
-  const extraPages = useMemo(() => getExtraPages(config), [config]);
-  const isHome = editingPageId === "home";
-  const activeExtraPage = extraPages.find((p) => p.id === editingPageId) ?? null;
 
   const invoice = useMemo(
     () => computeInvoice(config, template, catalog as any),
@@ -75,71 +60,33 @@ export function BuilderClient({
     setConfig((c) => fn(structuredClone(c)));
   }
 
-  function withPages(c: SiteConfig, pages: ExtraPage[]) {
-    c.widgets = c.widgets.filter((w) => w.widgetId !== "pagina-adicional");
-    if (pages.length > 0) c.widgets.push({ widgetId: "pagina-adicional", config: { pages } });
-  }
-
-  function mutateActiveSections(fn: (sections: Section[]) => Section[]) {
+  function updateSection(id: string, fn: (s: Section) => void) {
     update((c) => {
-      if (editingPageId === "home") {
-        c.sections = fn(c.sections);
-        return c;
-      }
-      const pages = normalizeExtraPages(
-        c.widgets.find((w) => w.widgetId === "pagina-adicional")?.config?.pages
-      );
-      const page = pages.find((p) => p.id === editingPageId);
-      if (page) page.sections = fn(page.sections);
-      withPages(c, pages);
+      const s = c.sections.find((x) => x.id === id);
+      if (s) fn(s);
       return c;
     });
   }
 
-  function updateSection(id: string, fn: (s: Section) => void) {
-    mutateActiveSections((sections) => {
-      const s = sections.find((x) => x.id === id);
-      if (s) fn(s);
-      return sections;
-    });
-  }
-
   function moveSection(id: string, dir: -1 | 1) {
-    mutateActiveSections((sections) => {
-      const sorted = [...sections].sort((a, b) => a.order - b.order);
+    update((c) => {
+      const sorted = [...c.sections].sort((a, b) => a.order - b.order);
       const i = sorted.findIndex((s) => s.id === id);
       const j = i + dir;
-      if (j < 0 || j >= sorted.length) return sections;
+      if (j < 0 || j >= sorted.length) return c;
       [sorted[i].order, sorted[j].order] = [sorted[j].order, sorted[i].order];
-      return sections;
+      return c;
     });
-  }
-
-  /** ¿El tipo de sección sigue usándose en inicio o en alguna página? */
-  function sectionTypeStillUsed(c: SiteConfig, type: string, exceptId?: string): boolean {
-    if (c.sections.some((s) => s.type === type && s.id !== exceptId)) return true;
-    return getExtraPages(c).some((p) => p.sections.some((s) => s.type === type && s.id !== exceptId));
   }
 
   function removeSection(id: string) {
     update((c) => {
-      let target: Section | undefined;
-      if (editingPageId === "home") {
-        target = c.sections.find((s) => s.id === id);
-        c.sections = c.sections.filter((s) => s.id !== id);
-      } else {
-        const pages = getExtraPages(c);
-        const page = pages.find((p) => p.id === editingPageId);
-        target = page?.sections.find((s) => s.id === id);
-        if (page) page.sections = page.sections.filter((s) => s.id !== id);
-        withPages(c, pages);
-      }
-      // Quitar widget solo si ya no hay ninguna sección de ese tipo en el sitio
+      const target = c.sections.find((s) => s.id === id);
+      c.sections = c.sections.filter((s) => s.id !== id);
+      // Si la sección venía de un widget, se quita también el cargo
       if (target) {
-        const w = catalog.find((w) => w.sectionType === target!.type);
-        if (w && !sectionTypeStillUsed(c, target.type, id)) {
-          c.widgets = c.widgets.filter((x) => x.widgetId !== w.slug);
-        }
+        const w = catalog.find((w) => w.sectionType === target.type);
+        if (w) c.widgets = c.widgets.filter((x) => x.widgetId !== w.slug);
       }
       return c;
     });
@@ -153,18 +100,9 @@ export function BuilderClient({
     update((c) => {
       if (c.widgets.some((x) => x.widgetId === w.slug)) {
         c.widgets = c.widgets.filter((x) => x.widgetId !== w.slug);
-        // Quitar secciones de ese tipo en inicio y en páginas extra
-        if (w.sectionType) {
-          c.sections = c.sections.filter((s) => s.type !== w.sectionType);
-          const pages = getExtraPages(c).map((p) => ({
-            ...p,
-            sections: p.sections.filter((s) => s.type !== w.sectionType),
-          }));
-          withPages(c, pages);
-        }
+        if (w.sectionType) c.sections = c.sections.filter((s) => s.type !== w.sectionType);
       } else {
         c.widgets.push({ widgetId: w.slug, config: {} });
-        // Al activar desde Widgets, la sección se agrega a la página de inicio
         if (w.sectionType && !c.sections.some((s) => s.type === w.sectionType)) {
           const maxOrder = Math.max(0, ...c.sections.map((s) => s.order));
           c.sections.push(makeSection(w.sectionType as SectionType, maxOrder + 1, c.business.name));
@@ -186,42 +124,16 @@ export function BuilderClient({
     });
   }
 
-  /**
-   * Agrega una sección a la página en edición.
-   * - En inicio: widgets se activan y facturan (igual que antes).
-   * - En página extra: la sección va en esa página; el widget se activa si aplica
-   *   (factura una vez). custom y bases se incluyen en el precio de la página.
-   */
+  /** Agrega una sección: gratis si es base (hero/about/products), con cargo si viene de un widget. */
   function addSection(type: SectionType) {
     const w = catalog.find((x) => x.sectionType === type);
-
-    if (editingPageId === "home") {
-      if (w && !hasWidget(w.slug)) {
-        toggleWidget(w);
-        return;
-      }
-      update((c) => {
-        // custom / iframe se pueden repetir; el resto no si ya está
-        if (!REPEATABLE_SECTIONS.has(type) && c.sections.some((s) => s.type === type)) return c;
-        const maxOrder = Math.max(0, ...c.sections.map((s) => s.order));
-        c.sections.push(makeSection(type, maxOrder + 1, c.business.name));
-        return c;
-      });
+    if (w && !hasWidget(w.slug)) {
+      toggleWidget(w); // agrega la sección y su cargo en la factura
       return;
     }
-
-    // Página adicional
     update((c) => {
-      if (w && !c.widgets.some((x) => x.widgetId === w.slug)) {
-        c.widgets.push({ widgetId: w.slug, config: {} });
-      }
-      const pages = getExtraPages(c);
-      const page = pages.find((p) => p.id === editingPageId);
-      if (!page) return c;
-      if (!REPEATABLE_SECTIONS.has(type) && page.sections.some((s) => s.type === type)) return c;
-      const maxOrder = Math.max(0, ...page.sections.map((s) => s.order));
-      page.sections.push(makeSection(type, maxOrder + 1, c.business.name));
-      withPages(c, pages);
+      const maxOrder = Math.max(0, ...c.sections.map((s) => s.order));
+      c.sections.push(makeSection(type, maxOrder + 1, c.business.name));
       return c;
     });
   }
@@ -229,18 +141,10 @@ export function BuilderClient({
   /** Página adicional: no es toggle — la cantidad es el número de páginas definidas. */
   function setExtraPages(pages: ExtraPage[]) {
     update((c) => {
-      withPages(c, pages);
+      c.widgets = c.widgets.filter((w) => w.widgetId !== "pagina-adicional");
+      if (pages.length > 0) c.widgets.push({ widgetId: "pagina-adicional", config: { pages } });
       return c;
     });
-    // Si se borró la página que se editaba, volver al inicio
-    if (editingPageId !== "home" && !pages.some((p) => p.id === editingPageId)) {
-      setEditingPageId("home");
-    }
-  }
-
-  function updateExtraPage(pageIdToEdit: string, patch: Partial<ExtraPage>) {
-    const pages = extraPages.map((p) => (p.id === pageIdToEdit ? { ...p, ...patch } : p));
-    setExtraPages(pages);
   }
 
   async function save() {
@@ -256,6 +160,11 @@ export function BuilderClient({
       setError("No se pudo guardar. Intenta de nuevo.");
       return;
     }
+    const j = await res.json().catch(() => ({}));
+    // Si agregó módulos después de pagar, el servidor regresa el pedido a
+    // pendiente y aquí se refleja (se bloquea la descarga de nuevo).
+    if (j.status) setStatus(j.status);
+    if (j.invoice?.paidTotal !== undefined) setPaidTotal(j.invoice.paidTotal);
     setSavedAt(new Date());
   }
 
@@ -266,112 +175,61 @@ export function BuilderClient({
     });
   }
 
-  const activeSections = isHome
-    ? config.sections
-    : activeExtraPage?.sections ?? [];
-  const sorted = [...activeSections].sort((a, b) => a.order - b.order);
+  const sorted = [...config.sections].sort((a, b) => a.order - b.order);
 
   return (
-    <div className="app-surface flex h-[100dvh] flex-col bg-slate-100">
-      {/* Barra superior — apilada en móvil */}
-      <header className="shrink-0 border-b border-slate-200 bg-white px-3 py-2 sm:px-4 sm:py-2.5">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-sm font-semibold text-slate-900 sm:text-base">{config.business.name}</span>
-            <Badge tone="indigo" className="hidden shrink-0 sm:inline-flex">
-              {template.name}
-            </Badge>
-            {status === "COMPLETED" && (
-              <Badge tone="slate" className="hidden shrink-0 md:inline-flex">
-                Pedido registrado
-              </Badge>
-            )}
-            {status === "PAID" && (
-              <Badge tone="green" className="hidden shrink-0 md:inline-flex">
-                Pagado
-              </Badge>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-            {savedAt && !saving && (
-              <span className="order-last w-full text-[11px] text-slate-400 sm:order-none sm:w-auto sm:text-xs">
-                Guardado {savedAt.toLocaleTimeString()}
-              </span>
-            )}
-            {error && <span className="text-[11px] text-rose-600 sm:text-xs">{error}</span>}
-            <Button variant="ghost" size="sm" onClick={copyLink} className="min-h-9 px-2.5 text-xs sm:min-h-8 sm:text-sm">
-              <span className="sm:hidden">{linkCopied ? "✓" : "🔗"}</span>
-              <span className="hidden sm:inline">{linkCopied ? "✓ Copiado" : "🔗 Enlace"}</span>
-            </Button>
-            <Link href={`/preview/${siteKey}`} target="_blank" className="hidden sm:inline-flex">
-              <Button variant="outline" size="sm">
-                Vista ↗
-              </Button>
-            </Link>
-            {status === "PAID" ? (
-              <a href={`/api/sites/${siteKey}/export`} className="hidden sm:inline-flex">
-                <Button variant="secondary" size="sm">
-                  .zip
-                </Button>
-              </a>
-            ) : (
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled
-                title="La descarga del código se habilita cuando tu pago esté confirmado"
-                className="hidden sm:inline-flex"
-              >
-                🔒 .zip
-              </Button>
-            )}
-            <PayButton siteKey={siteKey} lineItems={invoice.lineItems} total={invoice.total} status={status} onPaid={() => setStatus("COMPLETED")} />
-            <Button size="sm" onClick={save} disabled={saving} className="min-h-9 flex-1 px-3 text-xs sm:min-h-8 sm:flex-none sm:text-sm">
-              {saving ? "…" : "Guardar"}
-            </Button>
-          </div>
+    <div className="app-surface flex h-screen flex-col bg-slate-100">
+      {/* Barra superior */}
+      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-2.5">
+        <div className="flex items-center gap-3">
+          <span className="font-semibold text-slate-900">{config.business.name}</span>
+          <Badge tone="indigo">{template.name}</Badge>
+          {status === "COMPLETED" && <Badge tone="slate">Pedido registrado</Badge>}
+          {status === "PAID" && <Badge tone="green">Pagado</Badge>}
         </div>
-        {/* Toggle editar / vista en móvil */}
-        <div className="mt-2 flex rounded-lg bg-slate-100 p-0.5 md:hidden">
-          <button
-            type="button"
-            onClick={() => setMobilePane("edit")}
-            className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${
-              mobilePane === "edit" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
-            }`}
-          >
-            Editar
-          </button>
-          <button
-            type="button"
-            onClick={() => setMobilePane("preview")}
-            className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${
-              mobilePane === "preview" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
-            }`}
-          >
-            Vista previa
-          </button>
+        <div className="flex items-center gap-2">
+          {savedAt && !saving && <span className="text-xs text-slate-400">Guardado {savedAt.toLocaleTimeString()}</span>}
+          {error && <span className="text-xs text-rose-600">{error}</span>}
+          <Button variant="ghost" size="sm" onClick={copyLink}>
+            {linkCopied ? "✓ Copiado" : "🔗 Copiar mi enlace"}
+          </Button>
+          <Link href={`/preview/${siteKey}`} target="_blank">
+            <Button variant="outline" size="sm">
+              Vista previa ↗
+            </Button>
+          </Link>
+          {status === "PAID" ? (
+            <a href={`/api/sites/${siteKey}/export`}>
+              <Button variant="secondary" size="sm">
+                Descargar .zip
+              </Button>
+            </a>
+          ) : (
+            <Button variant="secondary" size="sm" disabled title="La descarga del código se habilita cuando tu pago esté confirmado">
+              🔒 Descargar .zip
+            </Button>
+          )}
+          <PayButton siteKey={siteKey} lineItems={invoice.lineItems} total={invoice.total} paidTotal={paidTotal} status={status} onPaid={() => setStatus("COMPLETED")} />
+          <Button size="sm" onClick={save} disabled={saving}>
+            {saving ? "Guardando…" : "Guardar"}
+          </Button>
         </div>
       </header>
 
       {/* Aviso: la URL es la llave de acceso */}
-      <div className="hidden border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-800 sm:block">
+      <div className="border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-800">
         ⚠️ Este enlace es tu llave de acceso al sitio: <b>guárdalo</b> (márcalo como favorito o cópialo). Cualquiera con el enlace puede editarlo.
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <div className="flex min-h-0 flex-1">
         {/* Panel de edición */}
-        <aside
-          className={`flex min-h-0 w-full shrink-0 flex-col border-r border-slate-200 bg-white md:w-[380px] ${
-            mobilePane === "edit" ? "flex flex-1 md:flex-none md:h-auto" : "hidden md:flex"
-          }`}
-        >
-          <nav className="flex shrink-0 border-b border-slate-200 text-sm">
+        <aside className="flex w-[380px] shrink-0 flex-col border-r border-slate-200 bg-white">
+          <nav className="flex border-b border-slate-200 text-sm">
             {(["secciones", "widgets", "negocio"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
-                className={`flex-1 px-2 py-2.5 text-xs font-medium capitalize transition-colors sm:px-3 sm:text-sm ${
+                className={`flex-1 px-3 py-2.5 font-medium capitalize transition-colors ${
                   tab === t ? "border-b-2 border-brand-navy text-brand-navy" : "text-slate-500 hover:text-slate-800"
                 }`}
               >
@@ -385,85 +243,23 @@ export function BuilderClient({
 
             {tab === "secciones" && (
               <div className="space-y-3">
-                {/* Selector de página: inicio o páginas adicionales */}
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <Label>Página a editar</Label>
-                  <select
-                    value={editingPageId}
-                    onChange={(e) => setEditingPageId(e.target.value)}
-                    className="mt-1 h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
-                  >
-                    <option value="home">Inicio (página principal)</option>
-                    {extraPages.map((p, i) => (
-                      <option key={p.id} value={p.id}>
-                        {p.title.trim() || `Página extra ${i + 1}`}
-                      </option>
-                    ))}
-                  </select>
-                  {extraPages.length === 0 && (
-                    <p className="mt-1.5 text-[11px] text-slate-500">
-                      Para crear páginas nuevas ve a <b>Widgets → Página adicional</b>.
-                    </p>
-                  )}
-                </div>
-
-                {!isHome && activeExtraPage && (
-                  <div className="space-y-2 rounded-xl border border-brand-teal/40 bg-brand-teal/5 p-3">
-                    <div>
-                      <Label>Título de la página (menú y pestaña)</Label>
-                      <Input
-                        value={activeExtraPage.title}
-                        onChange={(e) => updateExtraPage(activeExtraPage.id, { title: e.target.value })}
-                        placeholder="Ej. Nosotros, Menú, Servicios…"
-                      />
-                    </div>
-                    <div>
-                      <Label>Texto introductorio (opcional)</Label>
-                      <Textarea
-                        rows={2}
-                        value={activeExtraPage.content}
-                        onChange={(e) => updateExtraPage(activeExtraPage.id, { content: e.target.value })}
-                        placeholder="Párrafo libre al inicio de la página…"
-                      />
-                    </div>
-                    <p className="text-[11px] text-slate-500">
-                      Debajo puedes armar la página con secciones de widgets o bloques <b>Personalizada</b>.
-                    </p>
-                  </div>
-                )}
-
-                {isHome && (
-                  <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
-                    💡 Cada sección puede aparecer (o no) en el menú del header. <b>Consejo:</b> si agregas todas al menú
-                    puede verse demasiado lleno y perder elegancia — elige las 3 o 4 más importantes.
-                  </p>
-                )}
-
-                {sorted.length === 0 && !isHome && (
-                  <p className="rounded-lg border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500">
-                    Esta página aún no tiene secciones. Agrega un widget (galería, mapa…) o un bloque personalizado.
-                  </p>
-                )}
-
+                <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
+                  💡 Cada sección puede aparecer (o no) en el menú del header. <b>Consejo:</b> si agregas todas al menú
+                  puede verse demasiado lleno y perder elegancia — elige las 3 o 4 más importantes.
+                </p>
                 {sorted.map((section, i) => (
                   <SectionEditor
                     key={section.id}
                     section={section}
                     isFirst={i === 0}
                     isLast={i === sorted.length - 1}
-                    canRemove={isHome ? !BASE_SECTIONS.has(section.type) || section.type !== "hero" : true}
-                    showInMenuToggle={isHome}
+                    canRemove={!BASE_SECTIONS.has(section.type) || section.type !== "hero"}
                     onChange={(fn) => updateSection(section.id, fn)}
                     onMove={(dir) => moveSection(section.id, dir)}
                     onRemove={() => removeSection(section.id)}
                   />
                 ))}
-                <AddSectionControl
-                  sections={activeSections}
-                  catalog={catalog}
-                  onAdd={addSection}
-                  onExtraPage={!isHome}
-                />
+                <AddSectionControl sections={config.sections} catalog={catalog} onAdd={addSection} />
               </div>
             )}
 
@@ -501,12 +297,8 @@ export function BuilderClient({
                   })}
                 <ExtraPagesCard
                   widget={catalog.find((w) => w.slug === "pagina-adicional")}
-                  pages={extraPages}
+                  pages={(widgetConfig("pagina-adicional").pages as ExtraPage[]) ?? []}
                   onChange={setExtraPages}
-                  onOpenPage={(id) => {
-                    setEditingPageId(id);
-                    setTab("secciones");
-                  }}
                 />
               </div>
             )}
@@ -514,22 +306,10 @@ export function BuilderClient({
         </aside>
 
         {/* Preview en vivo */}
-        <main
-          className={`min-h-0 min-w-0 flex-1 overflow-y-auto bg-slate-200 p-2 sm:p-4 ${
-            mobilePane === "preview" ? "flex" : "hidden md:block"
-          }`}
-        >
+        <main className="min-w-0 flex-1 overflow-y-auto bg-slate-200 p-4">
           {/* translateZ(0) hace que el botón fixed de WhatsApp quede contenido en el preview */}
-          <div
-            className="mx-auto min-h-full w-full max-w-5xl overflow-hidden rounded-xl bg-white shadow-2xl"
-            style={{ transform: "translateZ(0)" }}
-          >
-            <SiteRenderer
-              config={config}
-              templateConfig={templateConfig}
-              previewPageId={editingPageId}
-              onNavigatePage={setEditingPageId}
-            />
+          <div className="mx-auto min-h-full max-w-5xl overflow-hidden rounded-xl shadow-2xl" style={{ transform: "translateZ(0)" }}>
+            <SiteRenderer config={config} templateConfig={templateConfig} />
           </div>
         </main>
 
@@ -573,12 +353,14 @@ function PayButton({
   siteKey,
   lineItems,
   total,
+  paidTotal,
   status,
   onPaid,
 }: {
   siteKey: string;
   lineItems: LineItem[];
   total: number;
+  paidTotal: number;
   status: string;
   onPaid: () => void;
 }) {
@@ -624,6 +406,18 @@ function PayButton({
               <span className="font-semibold">Total</span>
               <span className="text-xl font-bold text-brand-navy">{formatMoney(total)}</span>
             </div>
+            {paidTotal > 0 && total > paidTotal && (
+              <div className="mt-2 rounded-lg bg-brand-teal/15 p-3 text-sm">
+                <div className="flex justify-between text-slate-600">
+                  <span>Ya pagado</span>
+                  <span>−{formatMoney(paidTotal)}</span>
+                </div>
+                <div className="mt-1 flex justify-between font-semibold text-brand-navy">
+                  <span>Saldo pendiente</span>
+                  <span>{formatMoney(total - paidTotal)}</span>
+                </div>
+              </div>
+            )}
             {status === "DRAFT" ? (
               <>
                 <p className="mt-4 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
@@ -661,32 +455,19 @@ function AddSectionControl({
   sections,
   catalog,
   onAdd,
-  onExtraPage = false,
 }: {
   sections: Section[];
   catalog: { slug: string; sectionType: string | null; price: number }[];
   onAdd: (type: SectionType) => void;
-  /** En páginas extra: custom se puede repetir; el precio de widgets se factura 1 vez. */
-  onExtraPage?: boolean;
 }) {
   const [selected, setSelected] = useState("");
   const present = new Set(sections.map((s) => s.type));
-  const available = (Object.keys(SECTION_LABELS) as SectionType[]).filter((t) => {
-    if (REPEATABLE_SECTIONS.has(t)) return true; // personalizada e iframe se pueden repetir
-    return !present.has(t);
-  });
+  const available = (Object.keys(SECTION_LABELS) as SectionType[]).filter((t) => !present.has(t));
   if (available.length === 0) return null;
 
   const priceLabel = (t: SectionType) => {
-    if (onExtraPage) {
-      const w = catalog.find((x) => x.sectionType === t);
-      if (w) return `widget +${formatMoney(w.price)}`;
-      return "incluida en la página";
-    }
     const w = catalog.find((x) => x.sectionType === t);
-    if (w) return `+${formatMoney(w.price)}`;
-    if (REPEATABLE_SECTIONS.has(t)) return "sección extra";
-    return "incluida";
+    return w ? `+${formatMoney(w.price)}` : "incluida";
   };
 
   return (
@@ -717,15 +498,15 @@ function AddSectionControl({
         </Button>
       </div>
       <p className="mt-1.5 text-xs text-slate-400">
-        {onExtraPage
-          ? "Puedes combinar widgets (galería, mapa, contacto…) y bloques personalizados. Los widgets se cobran una sola vez en todo el sitio."
-          : "Las secciones borradas se pueden volver a agregar aquí. Las de widget suman su precio; Personalizada cuenta como sección extra."}
+        Las secciones borradas se pueden volver a agregar aquí. Las que vienen de un widget suman su precio a la factura.
       </p>
     </div>
   );
 }
 
 // --- Configuración de widgets ------------------------------------------------
+
+export type ExtraPage = { title: string; content: string };
 
 /** Config específica por widget cuando está activo. */
 function WidgetConfig({
@@ -787,17 +568,15 @@ function WidgetConfig({
   return null;
 }
 
-/** Página adicional: se definen cuántas páginas hay; el contenido se arma en Secciones. */
+/** Página adicional: se definen cuántas y qué lleva cada una (precio por página). */
 function ExtraPagesCard({
   widget,
   pages,
   onChange,
-  onOpenPage,
 }: {
   widget?: { name: string; description: string; price: number };
   pages: ExtraPage[];
   onChange: (pages: ExtraPage[]) => void;
-  onOpenPage?: (pageId: string) => void;
 }) {
   if (!widget) return null;
   return (
@@ -806,66 +585,34 @@ function ExtraPagesCard({
       <p className="mt-0.5 text-xs text-slate-500">{widget.description}</p>
       <p className="mt-2 text-sm font-bold text-brand-navy">
         {formatMoney(widget.price)} <span className="font-normal text-slate-400">por página</span>
-        {pages.length > 0 && (
-          <span className="ml-2 text-slate-600">
-            × {pages.length} = {formatMoney(widget.price * pages.length)}
-          </span>
-        )}
-      </p>
-      <p className="mt-2 rounded-lg bg-white/70 p-2 text-[11px] text-slate-600">
-        Cada página puede armarse con <b>secciones de widgets</b> (galería, mapa, contacto…) y bloques{" "}
-        <b>Personalizada</b>. Crea la página aquí y edítala en la pestaña <b>Secciones</b>.
+        {pages.length > 0 && <span className="ml-2 text-slate-600">× {pages.length} = {formatMoney(widget.price * pages.length)}</span>}
       </p>
 
       <div className="mt-3 space-y-3">
         {pages.map((page, i) => (
-          <div key={page.id} className="rounded-lg border border-slate-200 bg-white p-3">
-            <div className="flex items-center justify-between gap-2">
+          <div key={i} className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="flex items-center justify-between">
               <Label className="mb-0">Página {i + 1}</Label>
-              <div className="flex items-center gap-2">
-                {onOpenPage && (
-                  <button
-                    type="button"
-                    onClick={() => onOpenPage(page.id)}
-                    className="text-xs font-medium text-brand-navy hover:underline"
-                  >
-                    Editar secciones →
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => onChange(pages.filter((p) => p.id !== page.id))}
-                  className="text-xs text-rose-500 hover:underline"
-                >
-                  Quitar
-                </button>
-              </div>
+              <button onClick={() => onChange(pages.filter((_, j) => j !== i))} className="text-xs text-rose-500 hover:underline">
+                Quitar
+              </button>
             </div>
             <Input
               className="mt-2"
               placeholder="Título (ej. Nosotros, Menú, Contacto)"
               value={page.title}
-              onChange={(e) =>
-                onChange(pages.map((p) => (p.id === page.id ? { ...p, title: e.target.value } : p)))
-              }
+              onChange={(e) => onChange(pages.map((p, j) => (j === i ? { ...p, title: e.target.value } : p)))}
             />
-            <p className="mt-1.5 text-[11px] text-slate-400">
-              {page.sections.length === 0
-                ? "Sin secciones aún"
-                : `${page.sections.length} sección${page.sections.length === 1 ? "" : "es"}`}
-              {page.content?.trim() ? " · con texto intro" : ""}
-            </p>
+            <Textarea
+              className="mt-2"
+              rows={3}
+              placeholder="¿Qué va en esta página? Describe el contenido (texto, fotos, secciones que quieres)…"
+              value={page.content}
+              onChange={(e) => onChange(pages.map((p, j) => (j === i ? { ...p, content: e.target.value } : p)))}
+            />
           </div>
         ))}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            const next: ExtraPage = { id: pageId(), title: "", content: "", sections: [] };
-            onChange([...pages, next]);
-            onOpenPage?.(next.id);
-          }}
-        >
+        <Button variant="outline" size="sm" onClick={() => onChange([...pages, { title: "", content: "" }])}>
           + Agregar página
         </Button>
       </div>
@@ -964,23 +711,14 @@ function FontsEditor({ config, update }: { config: SiteConfig; update: (fn: (c: 
       : -1;
 
   function applyEmbed() {
-    // Acepta: <link href="...">, @import url("..."), o la URL sola
-    const raw = embedDraft.trim();
-    const match =
-      raw.match(/href=["'](https:\/\/fonts\.googleapis\.com\/[^"']+)["']/) ||
-      raw.match(/@import\s+url\(["']?(https:\/\/fonts\.googleapis\.com\/[^"')\s]+)["']?\)/) ||
-      raw.match(/(https:\/\/fonts\.googleapis\.com\/css2?[^\s"'<>]+)/);
-    const url = (match?.[1] ?? "").replace(/&amp;/g, "&");
+    // Acepta el <link> completo de Google Fonts o solo la URL
+    const match = embedDraft.match(/href="([^"]+)"/) ?? embedDraft.match(/(https:\/\/fonts\.googleapis\.com\/css2[^\s"'<>]+)/);
+    const url = match?.[1] ?? match?.[0] ?? "";
     if (!url.startsWith("https://fonts.googleapis.com/")) {
-      alert("Pega el código embed de Google Fonts (el <link>, un @import, o la URL css2?family=…).");
+      alert("Pega el código embed (o la URL) de Google Fonts — debe apuntar a fonts.googleapis.com");
       return;
     }
-    // Intentar rellenar nombres de familia desde la URL si el usuario no los escribió
-    const families = [...url.matchAll(/family=([^&:]+)/g)].map((m) => decodeURIComponent(m[1].replace(/\+/g, " ")));
-    const patch: Partial<typeof theme> = { fontEmbedUrl: url };
-    if (!theme.fontHeading.trim() && families[0]) patch.fontHeading = families[0];
-    if (!theme.fontBody.trim() && (families[1] || families[0])) patch.fontBody = families[1] || families[0];
-    setTheme(patch);
+    setTheme({ fontEmbedUrl: url });
   }
 
   return (
@@ -1005,28 +743,13 @@ function FontsEditor({ config, update }: { config: SiteConfig; update: (fn: (c: 
             ))}
           </select>
           <button type="button" onClick={() => setCustom(true)} className="mt-2 text-xs text-brand-blue hover:underline">
-            Pegar código de Google Fonts (personalizado) →
+            Usar otra fuente de Google Fonts →
           </button>
-          {theme.fontEmbedUrl && (
-            <p className="mt-1.5 truncate text-[11px] text-emerald-700" title={theme.fontEmbedUrl}>
-              ✓ Embed activo: {theme.fontHeading || "…"} / {theme.fontBody || "…"}
-            </p>
-          )}
         </>
       ) : (
         <div className="space-y-2">
-          <Label className="text-xs">Código embed de Google Fonts</Label>
-          <Textarea
-            rows={4}
-            value={embedDraft}
-            onChange={(e) => setEmbedDraft(e.target.value)}
-            placeholder={'<link href="https://fonts.googleapis.com/css2?family=Lobster&family=Lato&display=swap" rel="stylesheet">'}
-            className="font-mono text-xs"
-          />
-          <p className="text-[11px] text-slate-500">
-            En <b>fonts.google.com</b> elige 1–2 familias → <b>Get embed code</b> → pega aquí el &lt;link&gt; (o la URL, o un{" "}
-            <code className="rounded bg-slate-200 px-1">@import</code>).
-          </p>
+          <Label className="text-xs">Pega el código embed de Google Fonts (el &lt;link&gt;)</Label>
+          <Textarea rows={3} value={embedDraft} onChange={(e) => setEmbedDraft(e.target.value)} placeholder={'<link href="https://fonts.googleapis.com/css2?family=..." rel="stylesheet">'} className="font-mono text-xs" />
           <div className="grid grid-cols-2 gap-2">
             <div>
               <Label className="text-xs">Fuente de títulos</Label>
@@ -1038,24 +761,13 @@ function FontsEditor({ config, update }: { config: SiteConfig; update: (fn: (c: 
             </div>
           </div>
           <div className="flex gap-2">
-            <Button size="sm" variant="secondary" onClick={applyEmbed}>
-              Aplicar fuentes
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setCustom(false);
-                setEmbedDraft("");
-                setTheme({ fontHeading: "", fontBody: "", fontEmbedUrl: "" });
-              }}
-            >
+            <Button size="sm" variant="secondary" onClick={applyEmbed}>Aplicar</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setCustom(false); setTheme({ fontHeading: "", fontBody: "", fontEmbedUrl: "" }); }}>
               Volver a presets
             </Button>
           </div>
           <p className="text-[11px] text-slate-400">
-            Al exportar el .zip, las fuentes quedan en <code className="rounded bg-slate-200 px-1">styles/fonts.css</code> para
-            editarlas a mano.
+            En fonts.google.com elige tu fuente → "Get embed code" → copia el bloque &lt;link&gt; y escribe los nombres tal cual aparecen.
           </p>
         </div>
       )}
@@ -1068,7 +780,6 @@ function SectionEditor({
   isFirst,
   isLast,
   canRemove,
-  showInMenuToggle = true,
   onChange,
   onMove,
   onRemove,
@@ -1077,7 +788,6 @@ function SectionEditor({
   isFirst: boolean;
   isLast: boolean;
   canRemove: boolean;
-  showInMenuToggle?: boolean;
   onChange: (fn: (s: Section) => void) => void;
   onMove: (dir: -1 | 1) => void;
   onRemove: () => void;
@@ -1087,23 +797,16 @@ function SectionEditor({
   const setContent = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     onChange((s) => (s.content[k] = e.target.value));
 
-  const label =
-    section.type === "custom" && c.title
-      ? `${SECTION_LABELS.custom}: ${String(c.title).slice(0, 28)}`
-      : section.type === "iframe" && (c.title || c.url)
-        ? `${SECTION_LABELS.iframe}: ${String(c.title || c.url).slice(0, 28)}`
-        : SECTION_LABELS[section.type];
-
   return (
     <div className="rounded-xl border border-slate-200">
       <div className="flex items-center justify-between px-3 py-2.5">
         <button onClick={() => setOpen((v) => !v)} className="flex-1 text-left text-sm font-medium text-slate-800">
-          {open ? "▾" : "▸"} {label}
+          {open ? "▾" : "▸"} {SECTION_LABELS[section.type]}
         </button>
         <div className="flex items-center gap-1 text-slate-400">
           <button onClick={() => onMove(-1)} disabled={isFirst} className="rounded px-1.5 py-0.5 hover:bg-slate-100 disabled:opacity-30" title="Subir">↑</button>
           <button onClick={() => onMove(1)} disabled={isLast} className="rounded px-1.5 py-0.5 hover:bg-slate-100 disabled:opacity-30" title="Bajar">↓</button>
-          {canRemove && (section.type !== "hero" || !showInMenuToggle) && (
+          {canRemove && section.type !== "hero" && (
             <button onClick={onRemove} className="rounded px-1.5 py-0.5 text-rose-400 hover:bg-rose-50" title="Quitar">✕</button>
           )}
         </div>
@@ -1111,12 +814,10 @@ function SectionEditor({
 
       {open && (
         <div className="space-y-3 border-t border-slate-100 p-3">
-          {showInMenuToggle && (
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <input type="checkbox" checked={section.inMenu} onChange={(e) => onChange((s) => (s.inMenu = e.target.checked))} />
-              Mostrar en el menú del header
-            </label>
-          )}
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={section.inMenu} onChange={(e) => onChange((s) => (s.inMenu = e.target.checked))} />
+            Mostrar en el menú del header
+          </label>
           {section.type === "contact" && (
             <p className="rounded-lg bg-amber-50 p-2.5 text-xs text-amber-700">
               📬 Aquí editas los textos del formulario. El <b>envío de mensajes</b> (a tu correo o WhatsApp) lo
@@ -1134,16 +835,20 @@ function SectionEditor({
             <>
               <div><Label>Subtítulo</Label><Textarea rows={2} value={c.subtitle ?? ""} onChange={setContent("subtitle")} /></div>
               <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label>Texto del botón</Label>
-                  <Input value={c.ctaText ?? ""} onChange={setContent("ctaText")} placeholder="Vacío = sin botón" />
-                </div>
+                <div><Label>Texto del botón</Label><Input value={c.ctaText ?? ""} onChange={setContent("ctaText")} /></div>
                 <div>
                   <Label>Enlace del botón</Label>
-                  <Input value={c.ctaLink ?? ""} onChange={setContent("ctaLink")} placeholder="Vacío = abre tu WhatsApp" />
+                  <Input
+                    value={c.ctaLink ?? ""}
+                    onChange={setContent("ctaLink")}
+                    placeholder="Vacío = WhatsApp del negocio"
+                  />
                 </div>
               </div>
-              <p className="text-[11px] text-slate-500">Si dejas el texto del botón vacío, no se muestra ningún botón de contacto.</p>
+              <p className="text-[11px] text-slate-500">
+                Por defecto, <b>Contáctanos</b> abre un chat de WhatsApp con el número del negocio
+                (Negocio → WhatsApp). Solo llena el enlace si quieres mandar a otra URL.
+              </p>
             </>
           )}
           {section.type === "about" && (
@@ -1152,117 +857,14 @@ function SectionEditor({
               <ImageField label="Imagen" value={c.imageUrl ?? ""} onUploaded={(url) => onChange((s) => (s.content.imageUrl = url))} />
             </>
           )}
-          {section.type === "custom" && (
-            <>
-              <div>
-                <Label>Texto</Label>
-                <Textarea rows={5} value={c.text ?? ""} onChange={setContent("text")} />
-              </div>
-              <div>
-                <Label>Diseño</Label>
-                <select
-                  value={c.layout ?? "text"}
-                  onChange={(e) => onChange((s) => (s.content.layout = e.target.value))}
-                  className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
-                >
-                  <option value="text">Solo texto</option>
-                  <option value="text-image">Texto + imagen a la derecha</option>
-                  <option value="image-text">Imagen a la izquierda + texto</option>
-                  <option value="centered">Centrado</option>
-                </select>
-              </div>
-              {(c.layout === "text-image" || c.layout === "image-text") && (
-                <ImageField label="Imagen" value={c.imageUrl ?? ""} onUploaded={(url) => onChange((s) => (s.content.imageUrl = url))} />
-              )}
-            </>
-          )}
-          {section.type === "iframe" && (
-            <>
-              <div>
-                <Label>URL a embeber</Label>
-                <Input
-                  value={c.url ?? ""}
-                  onChange={setContent("url")}
-                  placeholder="https://… o pega el HTML del iframe"
-                />
-                <p className="mt-1 text-[11px] text-slate-500">
-                  Pega la URL del contenido (YouTube, formularios, calendarios, otra web que permita embed) o el código{" "}
-                  <code className="rounded bg-slate-100 px-1">&lt;iframe src=&quot;…&quot;&gt;</code> completo. Solo con la URL se genera el iframe.
-                </p>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label>Alto ({Number(c.height ?? 480)}px)</Label>
-                  <input
-                    type="range"
-                    min={200}
-                    max={900}
-                    step={20}
-                    value={Number(c.height ?? 480)}
-                    onChange={(e) => onChange((s) => (s.content.height = Number(e.target.value)))}
-                    className="w-full"
-                  />
-                </div>
-                <div>
-                  <Label>Ancho</Label>
-                  <select
-                    value={c.width ?? "full"}
-                    onChange={(e) => onChange((s) => (s.content.width = e.target.value))}
-                    className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
-                  >
-                    <option value="full">Ancho completo</option>
-                    <option value="narrow">Centrado (más estrecho)</option>
-                  </select>
-                </div>
-              </div>
-            </>
-          )}
           {section.type === "map" && (
             <>
-              <div>
-                <Label>Dirección visible</Label>
-                <Input value={c.address ?? ""} onChange={setContent("address")} placeholder="Ej. Av. Juárez 30, CDMX" />
-              </div>
-              <div>
-                <Label>Enlace de Google Maps</Label>
-                <Textarea
-                  rows={3}
-                  value={c.embedUrl ?? ""}
-                  onChange={setContent("embedUrl")}
-                  placeholder="Pega el enlace de Maps, coordenadas, o el HTML del iframe"
-                />
-                <p className="mt-1 text-[11px] text-slate-500">
-                  Funciona con: enlace largo de Maps (barra de direcciones), código de <b>Compartir → Insertar un mapa</b>,
-                  coordenadas (<code className="rounded bg-slate-100 px-1">19.43,-99.13</code>) o solo la dirección.
-                  No uses links cortos <code className="rounded bg-slate-100 px-1">maps.app.goo.gl</code>.
-                </p>
-              </div>
+              <div><Label>Dirección visible</Label><Input value={c.address ?? ""} onChange={setContent("address")} /></div>
+              <div><Label>URL de embed de Google Maps</Label><Input value={c.embedUrl ?? ""} onChange={setContent("embedUrl")} placeholder="https://www.google.com/maps/embed?pb=…" /></div>
             </>
           )}
           {section.type === "contact" && (
             <div><Label>Subtítulo</Label><Input value={c.subtitle ?? ""} onChange={setContent("subtitle")} /></div>
-          )}
-          {section.type === "quote" && (
-            <>
-              <div>
-                <Label>Subtítulo</Label>
-                <Input value={c.subtitle ?? ""} onChange={setContent("subtitle")} placeholder="Instrucciones para el cliente…" />
-              </div>
-              <QuoteEditor section={section} onChange={onChange} />
-            </>
-          )}
-          {section.type === "products" && (
-            <div>
-              <Label>Esquinas redondeadas ({Number(c.radius ?? 20)}px)</Label>
-              <input
-                type="range"
-                min={0}
-                max={40}
-                value={Number(c.radius ?? 20)}
-                onChange={(e) => onChange((s) => (s.content.radius = Number(e.target.value)))}
-                className="w-full"
-              />
-            </div>
           )}
           {(section.type === "products" || section.type === "testimonials" || section.type === "faq") && (
             <ItemsEditor section={section} onChange={onChange} />
@@ -1305,18 +907,16 @@ function SectionEditor({
               </div>
             </div>
             <div className="mt-2">
-              <Label>Tarjetas</Label>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                <select
-                  value={section.style.card.rounded}
-                  onChange={(e) => onChange((s) => (s.style.card.rounded = e.target.value as any))}
-                  className="h-8 rounded-md border border-slate-200 bg-white px-2"
-                >
-                  <option value="none">Sin redondeo</option>
-                  <option value="md">Redondeo suave</option>
-                  <option value="xl">Redondeado</option>
-                  <option value="full">Muy redondeado</option>
-                </select>
+              <Label>Tarjetas — esquinas redondeadas ({cardRadiusPx(section.style.card)}px)</Label>
+              <input
+                type="range"
+                min={0}
+                max={48}
+                value={cardRadiusPx(section.style.card)}
+                onChange={(e) => onChange((s) => (s.style.card.radius = Number(e.target.value)))}
+                className="w-full"
+              />
+              <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-slate-600">
                 <label className="flex items-center gap-1"><input type="checkbox" checked={section.style.card.shadow} onChange={(e) => onChange((s) => (s.style.card.shadow = e.target.checked))} /> Sombra</label>
                 <label className="flex items-center gap-1"><input type="checkbox" checked={section.style.card.border} onChange={(e) => onChange((s) => (s.style.card.border = e.target.checked))} /> Borde</label>
               </div>
@@ -1392,147 +992,47 @@ function ItemsEditor({ section, onChange }: { section: Section; onChange: (fn: (
   );
 }
 
-type GalleryImg = {
-  url: string;
-  caption?: string;
-  colSpan?: number;
-  rowSpan?: number;
-  objectFit?: ObjectFitMode;
-  posX?: ImagePosX;
-  posY?: ImagePosY;
-};
-
-/** Controles por imagen: contain/cover + posición horizontal/vertical */
-function ImageFrameControls({
-  objectFit,
-  posX,
-  posY,
-  onChange,
-}: {
-  objectFit?: string;
-  posX?: string;
-  posY?: string;
-  onChange: (patch: { objectFit?: ObjectFitMode; posX?: ImagePosX; posY?: ImagePosY }) => void;
-}) {
-  const fit = normalizeObjectFit(objectFit);
-  const x = normalizePosX(posX);
-  const y = normalizePosY(posY);
-  return (
-    <div className="grid grid-cols-3 gap-1.5">
-      <div>
-        <Label className="text-[10px]">Ajuste</Label>
-        <select
-          value={fit}
-          onChange={(e) => onChange({ objectFit: e.target.value as ObjectFitMode })}
-          className="h-8 w-full rounded-md border border-slate-200 bg-white px-1.5 text-xs"
-        >
-          <option value="cover">Cover (recorta)</option>
-          <option value="contain">Contain (caber)</option>
-        </select>
-      </div>
-      <div>
-        <Label className="text-[10px]">Horizontal</Label>
-        <select
-          value={x}
-          onChange={(e) => onChange({ posX: e.target.value as ImagePosX })}
-          className="h-8 w-full rounded-md border border-slate-200 bg-white px-1.5 text-xs"
-        >
-          <option value="left">Izquierda</option>
-          <option value="center">Centro</option>
-          <option value="right">Derecha</option>
-        </select>
-      </div>
-      <div>
-        <Label className="text-[10px]">Vertical</Label>
-        <select
-          value={y}
-          onChange={(e) => onChange({ posY: e.target.value as ImagePosY })}
-          className="h-8 w-full rounded-md border border-slate-200 bg-white px-1.5 text-xs"
-        >
-          <option value="top">Arriba</option>
-          <option value="center">Centro</option>
-          <option value="bottom">Abajo</option>
-        </select>
-      </div>
-    </div>
-  );
-}
-
 function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn: (s: Section) => void) => void }) {
   const c = section.content;
   const cols = Math.min(10, Math.max(2, Number(c.columns) || 3));
-  const images: GalleryImg[] = ((c.images as any[]) ?? [])
-    .map((i) =>
-      typeof i === "string"
-        ? { url: i, colSpan: 1, rowSpan: 1, objectFit: "cover" as const, posX: "center" as const, posY: "center" as const }
-        : i
-    )
+  const images: { url: string; caption?: string }[] = ((c.images as any[]) ?? [])
+    .map((i) => (typeof i === "string" ? { url: i } : i))
     .filter((i) => i?.url);
-  const max = 24;
+  const max = cols * cols;
   const set = (k: string, v: any) => onChange((s) => (s.content[k] = v));
-  const setImages = (imgs: GalleryImg[]) => set("images", imgs);
-  const patchImage = (i: number, patch: Partial<GalleryImg>) =>
-    setImages(images.map((x, j) => (j === i ? { ...x, ...patch } : x)));
-
-  // Si ya hay spans o tamaños custom, abrir avanzados por defecto
-  const hasAdvancedLayout = images.some(
-    (img) => (Number(img.colSpan) || 1) > 1 || (Number(img.rowSpan) || 1) > 1
-  );
-  const hasAdvancedSize =
-    (c.maxWidth !== undefined &&
-      c.maxWidth !== null &&
-      c.maxWidth !== "" &&
-      c.maxWidth !== 0 &&
-      c.maxWidth !== "full" &&
-      c.maxWidth !== "0") ||
-    Number(c.maxCell ?? 300) !== 300 ||
-    (c.rowHeight !== undefined && Number(c.rowHeight) !== 160);
-  const [advancedOpen, setAdvancedOpen] = useState(hasAdvancedLayout || hasAdvancedSize);
-
-  const maxWidthLabel =
-    c.maxWidth === undefined ||
-    c.maxWidth === null ||
-    c.maxWidth === "" ||
-    c.maxWidth === 0 ||
-    c.maxWidth === "full" ||
-    c.maxWidth === "0"
-      ? "100%"
-      : `${Number(c.maxWidth)}px`;
+  const setImages = (imgs: { url: string; caption?: string }[]) => set("images", imgs);
 
   return (
     <div className="space-y-3">
-      {/* —— Básico —— */}
-      <div>
-        <Label>Tamaño del grid</Label>
-        <select
-          value={cols}
-          onChange={(e) => set("columns", Number(e.target.value))}
-          className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm font-medium"
-        >
-          {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => (
-            <option key={n} value={n}>
-              {n}×{n}
-            </option>
-          ))}
-        </select>
-        <p className="mt-0.5 text-[11px] text-slate-400">
-          {cols}×{cols} — hasta {cols * cols} fotos en celdas 1×1 (en avanzados puedes hacer 2×1, 1×2, etc.)
-        </p>
-      </div>
-
-      <div>
-        <Label>Efecto al pasar el mouse</Label>
-        <select
-          value={c.hoverEffect ?? "zoom"}
-          onChange={(e) => set("hoverEffect", e.target.value)}
-          className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
-        >
-          <option value="none">Ninguno</option>
-          <option value="zoom">Zoom</option>
-          <option value="lift">Elevar con sombra</option>
-          <option value="gray">Gris → color</option>
-          <option value="dark">Oscuro → claro</option>
-        </select>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <Label>Cuadrícula</Label>
+          <select
+            value={cols}
+            onChange={(e) => set("columns", Number(e.target.value))}
+            className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+          >
+            {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => (
+              <option key={n} value={n}>
+                {n} × {n} (hasta {n * n} fotos)
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <Label>Efecto al pasar el mouse</Label>
+          <select
+            value={c.hoverEffect ?? "zoom"}
+            onChange={(e) => set("hoverEffect", e.target.value)}
+            className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+          >
+            <option value="none">Ninguno</option>
+            <option value="zoom">Zoom</option>
+            <option value="lift">Elevar con sombra</option>
+            <option value="gray">Gris → color</option>
+            <option value="dark">Oscuro → claro</option>
+          </select>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -1587,195 +1087,27 @@ function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn:
         </Label>
         {images.length >= max ? (
           <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-700">
-            Límite de {max} fotos. Quita una para agregar otra.
+            Cuadrícula llena. Cambia a una cuadrícula más grande o quita una foto.
           </p>
         ) : (
-          <ImageField
-            label="Agregar foto"
-            value=""
-            onUploaded={(url) =>
-              setImages([
-                ...images,
-                { url, caption: "", colSpan: 1, rowSpan: 1, objectFit: "cover", posX: "center", posY: "center" },
-              ])
-            }
-          />
+          <ImageField label="Agregar foto" value="" onUploaded={(url) => setImages([...images, { url, caption: "" }])} />
         )}
         <div className="mt-2 space-y-2">
-          {images.map((img, i) => {
-            const cs = Number(img.colSpan) || 1;
-            const rs = Number(img.rowSpan) || 1;
-            return (
-              <div key={i} className="space-y-2 rounded-lg border border-slate-200 bg-white p-2">
-                <div className="flex items-center gap-2">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={img.url}
-                    alt=""
-                    className="h-10 w-10 shrink-0 rounded"
-                    style={{
-                      objectFit: normalizeObjectFit(img.objectFit),
-                      objectPosition: `${normalizePosX(img.posX)} ${normalizePosY(img.posY)}`,
-                    }}
-                  />
-                  <Input
-                    placeholder="Texto de esta foto (opcional)"
-                    value={img.caption ?? ""}
-                    onChange={(e) => patchImage(i, { caption: e.target.value })}
-                  />
-                  <span
-                    className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                      cs > 1 || rs > 1 ? "bg-brand-teal/15 text-brand-navy" : "bg-slate-100 text-slate-500"
-                    }`}
-                    title="Tamaño en el grid (cambia en Ajustes avanzados)"
-                  >
-                    {cs}×{rs}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setImages(images.filter((_, j) => j !== i))}
-                    className="shrink-0 text-xs text-rose-500 hover:underline"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <ImageFrameControls
-                  objectFit={img.objectFit}
-                  posX={img.posX}
-                  posY={img.posY}
-                  onChange={(patch) => patchImage(i, patch)}
-                />
-              </div>
-            );
-          })}
+          {images.map((img, i) => (
+            <div key={i} className="flex items-center gap-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={img.url} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
+              <Input
+                placeholder="Texto de esta foto (opcional)"
+                value={img.caption ?? ""}
+                onChange={(e) => setImages(images.map((x, j) => (j === i ? { ...x, caption: e.target.value } : x)))}
+              />
+              <button onClick={() => setImages(images.filter((_, j) => j !== i))} className="shrink-0 text-xs text-rose-500 hover:underline">
+                ✕
+              </button>
+            </div>
+          ))}
         </div>
-      </div>
-
-      {/* —— Avanzado: tamaño del grid y spans por foto —— */}
-      <div className="rounded-xl border border-dashed border-slate-300">
-        <button
-          type="button"
-          onClick={() => setAdvancedOpen((v) => !v)}
-          className="flex w-full items-center justify-between px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
-        >
-          <span>Ajustes avanzados del grid</span>
-          <span className="text-slate-400">{advancedOpen ? "▾" : "▸"}</span>
-        </button>
-        {advancedOpen && (
-          <div className="space-y-3 border-t border-slate-200 p-3">
-            <p className="text-[11px] text-slate-500">
-              Controla el tamaño del grid y cuántas celdas ocupa cada foto (layout tipo bento: 2×1 panorámica, 1×2 vertical…).
-            </p>
-
-            <div>
-              <Label>Ancho del grid ({maxWidthLabel})</Label>
-              <input
-                type="range"
-                min={0}
-                max={1400}
-                step={20}
-                value={
-                  c.maxWidth === undefined ||
-                  c.maxWidth === null ||
-                  c.maxWidth === "" ||
-                  c.maxWidth === 0 ||
-                  c.maxWidth === "full" ||
-                  c.maxWidth === "0"
-                    ? 0
-                    : Math.min(1400, Math.max(0, Number(c.maxWidth)))
-                }
-                onChange={(e) => set("maxWidth", Number(e.target.value))}
-                className="w-full"
-              />
-              <p className="mt-0.5 text-[11px] text-slate-400">
-                0 = todo el ancho. Baja el valor (ej. 640–960) para un grid más compacto y centrado.
-              </p>
-            </div>
-
-            <div>
-              <Label>
-                Tamaño máx. celda 1×1 (
-                {Number(c.maxCell ?? 300) > 0 ? `${Number(c.maxCell ?? 300)}px` : "sin límite"})
-              </Label>
-              <input
-                type="range"
-                min={0}
-                max={400}
-                step={10}
-                value={Math.min(400, Math.max(0, Number(c.maxCell ?? 300)))}
-                onChange={(e) => set("maxCell", Number(e.target.value))}
-                className="w-full"
-              />
-              <p className="mt-0.5 text-[11px] text-slate-400">
-                Por defecto 300px. 0 = sin límite (ocupa todo el ancho disponible).
-              </p>
-            </div>
-
-            <div>
-              <Label>Alto de fila base ({Number(c.rowHeight ?? 160)}px)</Label>
-              <input
-                type="range"
-                min={80}
-                max={320}
-                step={10}
-                value={Math.min(320, Math.max(80, Number(c.rowHeight ?? 160)))}
-                onChange={(e) => set("rowHeight", Number(e.target.value))}
-                className="w-full"
-              />
-              <p className="mt-0.5 text-[11px] text-slate-400">
-                Altura de una celda 1×1. Una foto de 2 filas mide el doble de alto.
-              </p>
-            </div>
-
-            {images.length > 0 && (
-              <div className="space-y-2">
-                <Label>Proporción de cada foto</Label>
-                <p className="text-[11px] text-slate-500">
-                  Columnas = ancho · Filas = alto. Ej: 2×1 panorámica, 1×3 vertical, 2×2 grande.
-                </p>
-                {images.map((img, i) => {
-                  const colSpan = Math.min(cols, Math.max(1, Number(img.colSpan) || 1));
-                  const rowSpan = Math.min(cols, Math.max(1, Number(img.rowSpan) || 1));
-                  return (
-                    <div key={i} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={img.url} alt="" className="h-9 w-9 shrink-0 rounded object-cover" />
-                      <div className="min-w-0 flex-1 grid grid-cols-2 gap-1.5">
-                        <select
-                          value={colSpan}
-                          onChange={(e) => patchImage(i, { colSpan: Number(e.target.value) })}
-                          className="h-8 w-full rounded-md border border-slate-200 bg-white px-1.5 text-xs"
-                          title="Ancho en columnas"
-                        >
-                          {Array.from({ length: cols }, (_, n) => n + 1).map((n) => (
-                            <option key={n} value={n}>
-                              {n} col
-                            </option>
-                          ))}
-                        </select>
-                        <select
-                          value={rowSpan}
-                          onChange={(e) => patchImage(i, { rowSpan: Number(e.target.value) })}
-                          className="h-8 w-full rounded-md border border-slate-200 bg-white px-1.5 text-xs"
-                          title="Alto en filas"
-                        >
-                          {Array.from({ length: cols }, (_, n) => n + 1).map((n) => (
-                            <option key={n} value={n}>
-                              {n} fil
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <span className="shrink-0 text-[10px] font-medium text-slate-500">
-                        {colSpan}×{rowSpan}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -1874,240 +1206,13 @@ function LogoField({
   );
 }
 
-// --- Cotizador ---------------------------------------------------------------
-
-type QuoteProduct = { name: string; price: number; description?: string };
-type QuoteCategory = {
-  name: string;
-  mode?: "multi" | "single";
-  products: QuoteProduct[];
-};
-
-/** Normaliza cotizadores viejos (options[]) al formato por categorías. */
-export function normalizeQuoteCategories(content: Record<string, any>): QuoteCategory[] {
-  if (Array.isArray(content.categories) && content.categories.length > 0) {
-    return content.categories.map((cat: any) => ({
-      name: String(cat?.name ?? "Categoría"),
-      mode: cat?.mode === "single" ? "single" : "multi",
-      products: Array.isArray(cat?.products)
-        ? cat.products.map((p: any) => ({
-            name: String(p?.name ?? "Producto"),
-            price: Number(p?.price) || 0,
-            description: String(p?.description ?? ""),
-          }))
-        : [],
-    }));
-  }
-  // Compat: options: [{ label, price }]
-  const options = Array.isArray(content.options) ? content.options : [];
-  if (options.length > 0) {
-    return [
-      {
-        name: "Opciones",
-        mode: "multi",
-        products: options.map((o: any) => ({
-          name: String(o?.label ?? o?.name ?? "Opción"),
-          price: Number(o?.price) || 0,
-          description: "",
-        })),
-      },
-    ];
-  }
-  return [
-    {
-      name: "Productos",
-      mode: "multi",
-      products: [{ name: "Producto ejemplo", price: 100, description: "" }],
-    },
-  ];
-}
-
-function QuoteEditor({ section, onChange }: { section: Section; onChange: (fn: (s: Section) => void) => void }) {
-  const c = section.content;
-  const categories = normalizeQuoteCategories(c);
-  const currency = c.currency ?? "$";
-
-  function setCategories(next: QuoteCategory[]) {
-    onChange((s) => {
-      s.content.categories = next;
-      // Dejar de depender del formato viejo
-      delete s.content.options;
-    });
-  }
-
-  function patchCategory(ci: number, patch: Partial<QuoteCategory>) {
-    setCategories(categories.map((cat, i) => (i === ci ? { ...cat, ...patch } : cat)));
-  }
-
-  function patchProduct(ci: number, pi: number, patch: Partial<QuoteProduct>) {
-    setCategories(
-      categories.map((cat, i) =>
-        i === ci
-          ? {
-              ...cat,
-              products: cat.products.map((p, j) => (j === pi ? { ...p, ...patch } : p)),
-            }
-          : cat
-      )
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <Label>Precio base ({currency})</Label>
-          <Input
-            type="number"
-            min={0}
-            value={String(c.basePrice ?? 0)}
-            onChange={(e) => onChange((s) => (s.content.basePrice = Number(e.target.value) || 0))}
-            placeholder="0"
-          />
-          <p className="mt-0.5 text-[11px] text-slate-400">Cargo fijo opcional (0 = sin base).</p>
-        </div>
-        <div>
-          <Label>Símbolo de moneda</Label>
-          <Input
-            value={currency}
-            onChange={(e) => onChange((s) => (s.content.currency = e.target.value))}
-            placeholder="$"
-          />
-        </div>
-      </div>
-
-      <p className="text-[11px] text-slate-500">
-        Agrupa por <b>tipo de producto</b>. El visitante puede elegir varios productos y cantidades dentro de cada tipo
-        (o solo uno si eliges “uno solo”).
-      </p>
-
-      {categories.map((cat, ci) => (
-        <div key={ci} className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0 flex-1 space-y-2">
-              <div>
-                <Label className="text-xs">Nombre del tipo / categoría</Label>
-                <Input
-                  value={cat.name}
-                  onChange={(e) => patchCategory(ci, { name: e.target.value })}
-                  placeholder="Ej. Paquetes, Extras, Materiales…"
-                />
-              </div>
-              <div>
-                <Label className="text-xs">Selección</Label>
-                <select
-                  value={cat.mode ?? "multi"}
-                  onChange={(e) => patchCategory(ci, { mode: e.target.value as "multi" | "single" })}
-                  className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
-                >
-                  <option value="multi">Varios productos + cantidad</option>
-                  <option value="single">Solo un producto de este tipo</option>
-                </select>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setCategories(categories.filter((_, i) => i !== ci))}
-              className="shrink-0 text-xs text-rose-500 hover:underline"
-              disabled={categories.length <= 1}
-            >
-              Quitar tipo
-            </button>
-          </div>
-
-          <div className="space-y-2 border-t border-slate-100 pt-2">
-            <Label className="text-xs">Productos ({cat.products.length})</Label>
-            {cat.products.map((p, pi) => (
-              <div key={pi} className="space-y-1.5 rounded-lg border border-slate-100 bg-slate-50 p-2">
-                <div className="flex items-center gap-2">
-                  <Input
-                    className="flex-1"
-                    value={p.name}
-                    onChange={(e) => patchProduct(ci, pi, { name: e.target.value })}
-                    placeholder="Nombre del producto"
-                  />
-                  <div className="w-28 shrink-0">
-                    <Input
-                      type="number"
-                      min={0}
-                      value={String(p.price ?? 0)}
-                      onChange={(e) => patchProduct(ci, pi, { price: Number(e.target.value) || 0 })}
-                      placeholder="Precio"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      patchCategory(ci, {
-                        products: cat.products.filter((_, j) => j !== pi),
-                      })
-                    }
-                    className="shrink-0 text-xs text-rose-500 hover:underline"
-                    disabled={cat.products.length <= 1}
-                  >
-                    ✕
-                  </button>
-                </div>
-                <Input
-                  value={p.description ?? ""}
-                  onChange={(e) => patchProduct(ci, pi, { description: e.target.value })}
-                  placeholder="Descripción breve (opcional)"
-                />
-                <p className="text-[10px] text-slate-400">
-                  {currency}
-                  {Number(p.price) || 0} c/u
-                </p>
-              </div>
-            ))}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                patchCategory(ci, {
-                  products: [...cat.products, { name: "Nuevo producto", price: 0, description: "" }],
-                })
-              }
-            >
-              + Agregar producto
-            </Button>
-          </div>
-        </div>
-      ))}
-
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() =>
-          setCategories([
-            ...categories,
-            {
-              name: "Nuevo tipo",
-              mode: "multi",
-              products: [{ name: "Producto", price: 0, description: "" }],
-            },
-          ])
-        }
-      >
-        + Agregar tipo de producto
-      </Button>
-    </div>
-  );
-}
-
 function CarouselEditor({ section, onChange }: { section: Section; onChange: (fn: (s: Section) => void) => void }) {
   const c = section.content;
-  type CarouselImg = GalleryImg;
-  const images: CarouselImg[] = ((c.images as any[]) ?? [])
-    .map((i) =>
-      typeof i === "string"
-        ? { url: i, objectFit: "cover" as const, posX: "center" as const, posY: "center" as const }
-        : i
-    )
+  const images: { url: string; caption?: string }[] = ((c.images as any[]) ?? [])
+    .map((i) => (typeof i === "string" ? { url: i } : i))
     .filter((i) => i?.url);
   const set = (k: string, v: any) => onChange((s) => (s.content[k] = v));
-  const setImages = (imgs: CarouselImg[]) => set("images", imgs);
-  const patchImage = (i: number, patch: Partial<CarouselImg>) =>
-    setImages(images.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  const setImages = (imgs: { url: string; caption?: string }[]) => set("images", imgs);
 
   return (
     <div className="space-y-3">
@@ -2128,71 +1233,25 @@ function CarouselEditor({ section, onChange }: { section: Section; onChange: (fn
       <div>
         <Label>Fotos ({images.length} de 15)</Label>
         {images.length < 15 && (
-          <ImageField
-            label="Agregar foto"
-            value=""
-            onUploaded={(url) =>
-              setImages([...images, { url, caption: "", objectFit: "cover", posX: "center", posY: "center" }])
-            }
-          />
+          <ImageField label="Agregar foto" value="" onUploaded={(url) => setImages([...images, { url, caption: "" }])} />
         )}
         <div className="mt-2 space-y-2">
           {images.map((img, i) => (
-            <div key={i} className="space-y-2 rounded-lg border border-slate-200 bg-white p-2">
-              <div className="flex items-center gap-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={img.url}
-                  alt=""
-                  className="h-10 w-10 shrink-0 rounded"
-                  style={{
-                    objectFit: normalizeObjectFit(img.objectFit),
-                    objectPosition: `${normalizePosX(img.posX)} ${normalizePosY(img.posY)}`,
-                  }}
-                />
-                <Input
-                  placeholder="Texto de esta foto (opcional)"
-                  value={img.caption ?? ""}
-                  onChange={(e) => patchImage(i, { caption: e.target.value })}
-                />
-                <div className="flex shrink-0 flex-col text-xs text-slate-400">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      i > 0 &&
-                      setImages(images.map((x, j) => (j === i - 1 ? images[i] : j === i ? images[i - 1] : x)))
-                    }
-                    disabled={i === 0}
-                    className="hover:text-slate-700 disabled:opacity-30"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      i < images.length - 1 &&
-                      setImages(images.map((x, j) => (j === i + 1 ? images[i] : j === i ? images[i + 1] : x)))
-                    }
-                    disabled={i === images.length - 1}
-                    className="hover:text-slate-700 disabled:opacity-30"
-                  >
-                    ↓
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setImages(images.filter((_, j) => j !== i))}
-                  className="shrink-0 text-xs text-rose-500 hover:underline"
-                >
-                  ✕
-                </button>
-              </div>
-              <ImageFrameControls
-                objectFit={img.objectFit}
-                posX={img.posX}
-                posY={img.posY}
-                onChange={(patch) => patchImage(i, patch)}
+            <div key={i} className="flex items-center gap-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={img.url} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
+              <Input
+                placeholder="Texto de esta foto (opcional)"
+                value={img.caption ?? ""}
+                onChange={(e) => setImages(images.map((x, j) => (j === i ? { ...x, caption: e.target.value } : x)))}
               />
+              <div className="flex shrink-0 flex-col text-xs text-slate-400">
+                <button onClick={() => i > 0 && setImages(images.map((x, j) => (j === i - 1 ? images[i] : j === i ? images[i - 1] : x)))} disabled={i === 0} className="hover:text-slate-700 disabled:opacity-30">↑</button>
+                <button onClick={() => i < images.length - 1 && setImages(images.map((x, j) => (j === i + 1 ? images[i] : j === i ? images[i + 1] : x)))} disabled={i === images.length - 1} className="hover:text-slate-700 disabled:opacity-30">↓</button>
+              </div>
+              <button onClick={() => setImages(images.filter((_, j) => j !== i))} className="shrink-0 text-xs text-rose-500 hover:underline">
+                ✕
+              </button>
             </div>
           ))}
         </div>

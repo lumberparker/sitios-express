@@ -20,7 +20,9 @@ export const SectionStyleSchema = z.object({
   accentColor: z.string().default(""),
   card: z
     .object({
+      // Legado: presets. Si "radius" (px) está definido, tiene prioridad.
       rounded: z.enum(["none", "md", "xl", "full"]).default("xl"),
+      radius: z.number().min(0).max(48).optional(),
       shadow: z.boolean().default(true),
       border: z.boolean().default(false),
     })
@@ -38,10 +40,6 @@ export const SectionTypeSchema = z.enum([
   "faq",
   "contact",
   "quote",
-  // Bloque libre: título + texto + imagen opcional (secciones personalizadas)
-  "custom",
-  // Embed genérico: el usuario pega una URL (o HTML de iframe) y se muestra embebido
-  "iframe",
 ]);
 export type SectionType = z.infer<typeof SectionTypeSchema>;
 
@@ -125,6 +123,12 @@ export const TemplateConfigSchema = z.object({
 });
 export type TemplateConfig = z.infer<typeof TemplateConfigSchema>;
 
+/** Radio en px de las tarjetas de una sección (slider nuevo o preset legado). */
+export function cardRadiusPx(card: { rounded: string; radius?: number }): number {
+  if (typeof card.radius === "number") return card.radius;
+  return { none: 0, md: 10, xl: 20, full: 32 }[card.rounded] ?? 20;
+}
+
 let counter = 0;
 export function sectionId(type: string) {
   counter += 1;
@@ -142,251 +146,43 @@ export const SECTION_LABELS: Record<SectionType, string> = {
   faq: "Preguntas frecuentes",
   contact: "Formulario de contacto",
   quote: "Calculadora de cotización",
-  custom: "Personalizada",
-  iframe: "Iframe / Embed",
 };
 
-/** Secciones que se pueden repetir en la misma página. */
-export const REPEATABLE_SECTIONS = new Set<SectionType>(["custom", "iframe"]);
-
-// Ajuste de recorte por imagen (galería / carrusel)
-export type ObjectFitMode = "cover" | "contain";
-export type ImagePosX = "left" | "center" | "right";
-export type ImagePosY = "top" | "center" | "bottom";
-
-export function normalizeObjectFit(v: unknown): ObjectFitMode {
-  return v === "contain" ? "contain" : "cover";
-}
-export function normalizePosX(v: unknown): ImagePosX {
-  return v === "left" || v === "right" ? v : "center";
-}
-export function normalizePosY(v: unknown): ImagePosY {
-  return v === "top" || v === "bottom" ? v : "center";
-}
-/** CSS object-position: horizontal + vertical */
-export function cssObjectPosition(posX: ImagePosX, posY: ImagePosY): string {
-  return `${posX} ${posY}`;
-}
-
-/** Página extra (widget pagina-adicional): título + secciones propias + texto libre opcional. */
-export type ExtraPage = {
-  id: string;
-  title: string;
-  /** Texto libre introductorio (compat con páginas viejas solo-texto). */
-  content: string;
-  sections: Section[];
-};
-
-export function pageId() {
-  return sectionId("page");
-}
-
-/** Normaliza páginas del widget (formato viejo {title,content} o nuevo con sections). */
-export function normalizeExtraPages(raw: unknown): ExtraPage[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map((p: any, i: number) => {
-    const sections: Section[] = Array.isArray(p?.sections)
-      ? p.sections.map((s: unknown, j: number) => {
-          try {
-            return SectionSchema.parse(s);
-          } catch {
-            return makeSection("custom", j + 1);
-          }
-        })
-      : [];
-    return {
-      // id estable: si falta (páginas viejas), page_0, page_1… hasta que se guarde
-      id: typeof p?.id === "string" && p.id ? p.id : `page_${i}`,
-      title: String(p?.title ?? ""),
-      content: String(p?.content ?? ""),
-      sections,
-    };
-  });
-}
-
-export function getExtraPages(config: SiteConfig): ExtraPage[] {
-  const entry = config.widgets.find((w) => w.widgetId === "pagina-adicional");
-  return normalizeExtraPages(entry?.config?.pages);
-}
-
-/** Todas las secciones del sitio (inicio + páginas extra), para facturación y limpieza. */
-export function allSiteSections(config: SiteConfig): Section[] {
-  return [...config.sections, ...getExtraPages(config).flatMap((p) => p.sections)];
-}
-
 /**
- * Normaliza lo que el usuario pegue en una sección iframe:
- * URL directa, o HTML `<iframe src="...">` completo.
- * También convierte YouTube/Vimeo watch → embed cuando es posible.
+ * URL de chat de WhatsApp del negocio (wa.me).
+ * Usa whatsapp.number; si no hay, el teléfono del negocio.
  */
-export function normalizeIframeSrc(raw: string | undefined | null): string {
-  const input = String(raw ?? "").trim();
-  if (!input) return "";
-
-  // Pegaron el HTML del iframe
-  const iframeSrc = input.match(/src=["']([^"']+)["']/i)?.[1];
-  let url = (iframeSrc || input).trim().replace(/&amp;/g, "&");
-
-  // Protocolo relativo //example.com → https:
-  if (url.startsWith("//")) url = `https:${url}`;
-
-  // Sin protocolo: asumir https
-  if (!/^https?:\/\//i.test(url) && !url.startsWith("about:")) {
-    url = `https://${url}`;
-  }
-
-  try {
-    const u = new URL(url);
-
-    // YouTube: watch?v= / youtu.be / shorts → embed
-    if (/(?:www\.)?youtube\.com$/i.test(u.hostname) || /(?:www\.)?youtube-nocookie\.com$/i.test(u.hostname)) {
-      const v = u.searchParams.get("v");
-      if (v) return `https://www.youtube.com/embed/${v}`;
-      const shorts = u.pathname.match(/\/shorts\/([\w-]+)/);
-      if (shorts) return `https://www.youtube.com/embed/${shorts[1]}`;
-      const embed = u.pathname.match(/\/embed\/([\w-]+)/);
-      if (embed) return `https://www.youtube.com/embed/${embed[1]}${u.search}`;
-    }
-    if (/^(?:www\.)?youtu\.be$/i.test(u.hostname)) {
-      const id = u.pathname.replace(/^\//, "").split("/")[0];
-      if (id) return `https://www.youtube.com/embed/${id}`;
-    }
-
-    // Vimeo
-    if (/(?:www\.)?vimeo\.com$/i.test(u.hostname)) {
-      const id = u.pathname.match(/\/(\d+)/)?.[1];
-      if (id && !u.pathname.includes("/video/")) return `https://player.vimeo.com/video/${id}`;
-    }
-
-    return u.toString();
-  } catch {
-    return url;
-  }
+export function businessWhatsAppUrl(config: SiteConfig): string | null {
+  const raw = (config.whatsapp.number || config.business.phone || "").trim();
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return null;
+  const message =
+    config.whatsapp.defaultMessage?.trim() ||
+    "Hola, vi su sitio web y me gustaría más información.";
+  return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
 }
 
 /**
- * Embed de Google Maps sin API key (formato actual 2024+).
- * El viejo `?output=embed` ya no carga (404); hay que usar `/maps/embed?pb=…`.
- */
-function googleMapsEmbedFromQuery(query: string): string {
-  const q = query.trim().replace(/\s+/g, " ");
-  if (!q) return "";
-  // encodeURIComponent + dejar comas legibles en coords
-  const encoded = encodeURIComponent(q).replace(/%2C/gi, ",");
-  return `https://www.google.com/maps/embed?pb=!1m2!2m1!1s${encoded}`;
-}
-
-/**
- * Convierte lo que el usuario pegue (enlace de Maps, share, HTML de iframe o dirección)
- * en una URL válida para <iframe src> de Google Maps.
- */
-export function normalizeMapEmbedUrl(raw: string | undefined | null): string {
-  const input = String(raw ?? "").trim();
-  if (!input) return "";
-
-  // 1) HTML del iframe de "Compartir → Insertar un mapa"
-  const iframeSrc = input.match(/src=["']([^"']+)["']/i)?.[1];
-  let url = (iframeSrc || input).trim().replace(/&amp;/g, "&");
-
-  // 2) Ya es URL de embed oficial → usarla tal cual
-  if (/google\.[^/]+\/maps\/embed/i.test(url)) {
-    if (url.startsWith("//")) url = `https:${url}`;
-    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
-    return url;
-  }
-
-  // 3) Viejo formato ?output=embed → convertir a embed pb
-  if (/[?&]output=embed/i.test(url)) {
-    try {
-      const u = new URL(url.startsWith("http") ? url : `https://${url}`);
-      const q = u.searchParams.get("q") || u.searchParams.get("query") || "";
-      if (q) return googleMapsEmbedFromQuery(q);
-    } catch {
-      /* fall through */
-    }
-  }
-
-  // 4) Coordenadas en el path: /@19.4326,-99.1332,17z
-  const atCoords = url.match(/@(-?\d+\.?\d*),\s*(-?\d+\.?\d*)/);
-  if (atCoords) {
-    return googleMapsEmbedFromQuery(`${atCoords[1]},${atCoords[2]}`);
-  }
-
-  // 5) Solo lat,lng pegados (con o sin espacio)
-  const bareCoords = input.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
-  if (bareCoords) {
-    return googleMapsEmbedFromQuery(`${bareCoords[1]},${bareCoords[2]}`);
-  }
-
-  // 6) Parámetros y paths de Google Maps
-  try {
-    const u = new URL(url.startsWith("http") ? url : `https://${url}`);
-    const host = u.hostname.replace(/^www\./, "");
-    const isGoogleMaps =
-      host === "google.com" ||
-      host.endsWith(".google.com") ||
-      host === "maps.google.com" ||
-      host.startsWith("maps.google.");
-
-    if (isGoogleMaps || host.includes("google.")) {
-      const q = u.searchParams.get("q") || u.searchParams.get("query");
-      if (q) return googleMapsEmbedFromQuery(q);
-
-      const ll = u.searchParams.get("ll");
-      if (ll) return googleMapsEmbedFromQuery(ll.replace(/\s+/g, ""));
-
-      // /maps/place/Nombre+Del+Lugar/
-      const place = u.pathname.match(/\/maps\/place\/([^/]+)/) || u.pathname.match(/\/place\/([^/]+)/);
-      if (place?.[1]) {
-        const name = decodeURIComponent(place[1].replace(/\+/g, " "));
-        // Quitar sufijos tipo data= del nombre si vinieron mal
-        return googleMapsEmbedFromQuery(name.split("?")[0]);
-      }
-
-      const search = u.pathname.match(/\/maps\/search\/([^/]+)/) || u.pathname.match(/\/search\/([^/]+)/);
-      if (search?.[1]) {
-        return googleMapsEmbedFromQuery(decodeURIComponent(search[1].replace(/\+/g, " ")));
-      }
-
-      // /maps/dir/ ... origen/destino → usar destino
-      const dir = u.pathname.match(/\/maps\/dir\/(?:[^/]+\/)?([^/]+)/);
-      if (dir?.[1] && dir[1] !== "") {
-        return googleMapsEmbedFromQuery(decodeURIComponent(dir[1].replace(/\+/g, " ")));
-      }
-    }
-  } catch {
-    /* no es URL */
-  }
-
-  // 7) Enlaces cortos: no se pueden expandir en el cliente
-  if (/maps\.app\.goo\.gl|goo\.gl\/maps/i.test(url)) {
-    return "";
-  }
-
-  // 8) Texto libre (dirección) o lo que quede
-  if (!/^https?:\/\//i.test(input) && !/<iframe/i.test(input)) {
-    return googleMapsEmbedFromQuery(input);
-  }
-
-  // 9) URL de Maps no parseada: buscar como query
-  if (/google\.[^/]+\/maps|maps\.google\./i.test(url)) {
-    return googleMapsEmbedFromQuery(url);
-  }
-
-  return googleMapsEmbedFromQuery(input);
-}
-
-/**
- * Enlace del CTA del hero. Si el usuario no puso uno (o quedó el default
- * viejo "#contacto"), abre WhatsApp con el número del negocio.
+ * Enlace del CTA del hero. Por defecto (vacío, "#", "#contacto", etc.)
+ * abre una conversación de WhatsApp con el número del negocio.
+ * Solo se usa un enlace custom si el usuario escribió uno distinto.
  */
 export function resolveCtaLink(ctaLink: string | undefined, config: SiteConfig): string {
   const link = (ctaLink ?? "").trim();
-  const isDefault = !link || link === "#" || link === "#contacto";
-  if (isDefault && config.whatsapp.number) {
-    return `https://wa.me/${config.whatsapp.number.replace(/\D/g, "")}?text=${encodeURIComponent(config.whatsapp.defaultMessage)}`;
+  const normalized = link.toLowerCase();
+  const isDefault =
+    !link ||
+    normalized === "#" ||
+    normalized === "#contacto" ||
+    normalized === "#contact" ||
+    normalized === "/#contacto" ||
+    normalized === "/#contact" ||
+    normalized === "whatsapp" ||
+    normalized === "wa";
+  if (isDefault) {
+    return businessWhatsAppUrl(config) ?? (link || "#");
   }
-  return link || "#";
+  return link;
 }
 
 /** Tipografía efectiva: overrides del usuario o la del template. */
@@ -407,8 +203,8 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
       return {
         title: businessName || "Tu negocio, en grande",
         subtitle: "Cuéntale al mundo qué haces y por qué eres la mejor opción.",
-        // Sin botón por defecto; el usuario puede agregar uno en el builder
-        ctaText: "",
+        ctaText: "Contáctanos",
+        // Vacío = el botón abre WhatsApp con el número del negocio (ver resolveCtaLink)
         ctaLink: "",
       };
     case "about":
@@ -420,8 +216,6 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
     case "products":
       return {
         title: "Productos y servicios",
-        // Radio de esquinas de las tarjetas (px). Si no viene, se usa style.card.rounded.
-        radius: 20,
         items: [
           { name: "Producto estrella", description: "Descripción breve del producto.", price: "", imageUrl: "" },
           { name: "Servicio destacado", description: "Descripción breve del servicio.", price: "", imageUrl: "" },
@@ -437,11 +231,11 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
         ],
       };
     case "gallery":
-      // images: [{ url, caption, colSpan?, rowSpan? }] — bento grid
+      // images: [{ url, caption }] — se limita a columns² fotos (grid N×N)
       return {
         title: "Galería",
         images: [],
-        columns: 3, // columnas del grid base
+        columns: 3,
         gapX: 12,
         gapY: 12,
         borderWidth: 0,
@@ -449,12 +243,6 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
         radius: 16,
         hoverEffect: "zoom", // none | zoom | lift | gray | dark
         captionMode: "hover", // none | hover | always
-        // Ancho máximo del bloque de la cuadrícula (px). 0 = 100% del contenedor.
-        maxWidth: 960,
-        // Tamaño máximo de cada celda 1×1 (px). 0 = se reparte el ancho; default 300.
-        maxCell: 300,
-        // Alto de una fila del grid (px); define la proporción base 1×1
-        rowHeight: 160,
       };
     case "carousel":
       // Carrusel automático: images [{ url, caption }], interval en segundos
@@ -472,49 +260,13 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
     case "contact":
       return { title: "Contáctanos", subtitle: "Te respondemos en menos de 24 horas." };
     case "quote":
-      // Cotizador: categorías (tipos de producto) con varios productos y cantidad
       return {
         title: "Cotiza en línea",
-        subtitle: "Elige productos y cantidades. El total se actualiza al instante.",
-        basePrice: 0,
-        currency: "$",
-        categories: [
-          {
-            name: "Tipo de servicio",
-            // multi = varios productos a la vez con cantidad; single = solo uno del grupo
-            mode: "multi",
-            products: [
-              { name: "Servicio básico", price: 500, description: "Incluye lo esencial" },
-              { name: "Servicio premium", price: 900, description: "Con extras incluidos" },
-              { name: "Servicio express", price: 1200, description: "Entrega prioritaria" },
-            ],
-          },
-          {
-            name: "Extras",
-            mode: "multi",
-            products: [
-              { name: "Diseño adicional", price: 200, description: "" },
-              { name: "Soporte 1 mes", price: 150, description: "" },
-            ],
-          },
+        basePrice: 100,
+        options: [
+          { label: "Opción A", price: 50 },
+          { label: "Opción B", price: 80 },
         ],
-      };
-    case "custom":
-      return {
-        title: "Sección personalizada",
-        text: "Escribe aquí el contenido que quieras mostrar. Puedes usar varios bloques personalizados en la misma página.",
-        imageUrl: "",
-        // layout: text | text-image | image-text | centered
-        layout: "text",
-      };
-    case "iframe":
-      return {
-        title: "",
-        // URL o HTML <iframe src="..."> — se normaliza al renderizar
-        url: "",
-        height: 480,
-        // full = ancho completo del sitio; narrow = columna centrada
-        width: "full", // full | narrow
       };
   }
 }

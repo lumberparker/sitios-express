@@ -15,6 +15,9 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   const parsed = PatchSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
 
+  const current = await prisma.site.findUnique({ where: { id: params.id }, include: { invoice: true } });
+  if (!current) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+
   const site = await prisma.site.update({
     where: { id: params.id },
     data: {
@@ -22,6 +25,8 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       invoice: {
         update: {
           status: parsed.data.status === "PAID" ? "PAID" : parsed.data.status === "COMPLETED" ? "ISSUED" : "DRAFT",
+          // Al marcar pagado se registra cuánto se cobró; al deshacer, se limpia
+          paidTotal: parsed.data.status === "PAID" ? current.invoice?.total ?? 0 : 0,
         },
       },
     },
