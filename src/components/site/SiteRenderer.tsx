@@ -302,27 +302,7 @@ function SectionBody({
       );
 
     case "gallery":
-      return (
-        <div className="mx-auto max-w-6xl px-6 py-24">
-          <Reveal>
-            <h2 className="text-center text-3xl font-bold md:text-4xl" style={heading}>
-              {c.title}
-            </h2>
-          </Reveal>
-          <div className="mt-12 grid grid-cols-2 gap-4 md:grid-cols-3">
-            {(c.images ?? []).length > 0 ? (
-              (c.images as string[]).map((url, i) => (
-                <Reveal key={i} delay={i * 0.05}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={url} alt="" className="aspect-square w-full object-cover transition-transform hover:scale-[1.03]" style={{ borderRadius: 16 }} />
-                </Reveal>
-              ))
-            ) : (
-              <p className="col-span-full text-center text-sm opacity-50">Agrega fotos desde el builder.</p>
-            )}
-          </div>
-        </div>
-      );
+      return <GallerySection section={section} heading={heading} />;
 
     case "map":
       return (
@@ -399,6 +379,73 @@ function SectionBody({
     default:
       return null;
   }
+}
+
+export type GalleryImage = { url: string; caption?: string };
+
+/** Acepta el formato viejo (string[]) y el nuevo ([{ url, caption }]). */
+export function normalizeGalleryImages(raw: any): GalleryImage[] {
+  return ((raw as any[]) ?? [])
+    .map((i) => (typeof i === "string" ? { url: i } : i))
+    .filter((i): i is GalleryImage => Boolean(i?.url));
+}
+
+function GallerySection({ section, heading }: { section: Section; heading: React.CSSProperties }) {
+  const c = section.content;
+  const cols = Math.min(10, Math.max(2, Number(c.columns) || 3));
+  const images = normalizeGalleryImages(c.images).slice(0, cols * cols);
+  const gapX = Number(c.gapX ?? 12);
+  const gapY = Number(c.gapY ?? 12);
+  const borderWidth = Number(c.borderWidth ?? 0);
+  const borderColor = c.borderColor || "#ffffff";
+  const effect = c.hoverEffect ?? "zoom";
+  const capMode = c.captionMode ?? "hover";
+  const id = section.id;
+
+  // Reglas dinámicas (hover/caption) con alcance por sección
+  const css = [
+    `#${id} .g-item{position:relative;overflow:hidden;border-radius:16px}`,
+    `#${id} .g-item img{aspect-ratio:1;width:100%;object-fit:cover;display:block;border-radius:16px;transition:transform .35s ease,filter .35s ease;${
+      borderWidth ? `border:${borderWidth}px solid ${borderColor};` : ""
+    }}`,
+    `#${id} .g-cap{position:absolute;left:0;right:0;bottom:0;padding:.9rem;color:#fff;font-size:.85rem;background:linear-gradient(transparent,rgba(0,0,0,.75));border-radius:0 0 16px 16px;transition:opacity .3s}`,
+    capMode === "hover" ? `#${id} .g-cap{opacity:0} #${id} .g-item:hover .g-cap{opacity:1}` : "",
+    capMode === "none" ? `#${id} .g-cap{display:none}` : "",
+    effect === "zoom" ? `#${id} .g-item:hover img{transform:scale(1.07)}` : "",
+    effect === "lift" ? `#${id} .g-item{transition:transform .3s,box-shadow .3s} #${id} .g-item:hover{transform:translateY(-6px);box-shadow:0 16px 32px rgba(0,0,0,.25)}` : "",
+    effect === "gray" ? `#${id} .g-item img{filter:grayscale(1)} #${id} .g-item:hover img{filter:grayscale(0)}` : "",
+    effect === "dark" ? `#${id} .g-item img{filter:brightness(.72)} #${id} .g-item:hover img{filter:brightness(1)}` : "",
+    `@media (max-width:640px){ #${id} .g-grid{grid-template-columns:repeat(2,1fr)!important} }`,
+  ].join("\n");
+
+  return (
+    <div className="mx-auto max-w-6xl px-6 py-24">
+      <style dangerouslySetInnerHTML={{ __html: css }} />
+      <Reveal>
+        <h2 className="text-center text-3xl font-bold md:text-4xl" style={heading}>
+          {c.title}
+        </h2>
+      </Reveal>
+      {images.length > 0 ? (
+        <div
+          className="g-grid mt-12"
+          style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, columnGap: gapX, rowGap: gapY }}
+        >
+          {images.map((img, i) => (
+            <Reveal key={i} delay={Math.min(i * 0.04, 0.4)}>
+              <figure className="g-item">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={img.url} alt={img.caption || ""} />
+                {img.caption && <figcaption className="g-cap">{img.caption}</figcaption>}
+              </figure>
+            </Reveal>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-12 text-center text-sm opacity-50">Agrega fotos desde el builder.</p>
+      )}
+    </div>
+  );
 }
 
 function QuoteSection({ section, tpl, accent, heading }: { section: Section; tpl: TemplateConfig; accent: string; heading: React.CSSProperties }) {

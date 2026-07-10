@@ -152,15 +152,36 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number): st
   </div>
 </section>`;
 
-    case "gallery":
+    case "gallery": {
+      const cols = Math.min(10, Math.max(2, Number(c.columns) || 3));
+      const images: { url: string; caption?: string }[] = ((c.images as any[]) ?? [])
+        .map((i: any) => (typeof i === "string" ? { url: i } : i))
+        .filter((i: any) => i?.url)
+        .slice(0, cols * cols);
+      const gapX = Number(c.gapX ?? 12);
+      const gapY = Number(c.gapY ?? 12);
+      const borderWidth = Number(c.borderWidth ?? 0);
+      const borderColor = c.borderColor || "#ffffff";
+      const fx = ["zoom", "lift", "gray", "dark"].includes(c.hoverEffect) ? c.hoverEffect : c.hoverEffect === "none" ? "none" : "zoom";
+      const cap = ["none", "always"].includes(c.captionMode) ? c.captionMode : "hover";
+      const gridStyle = `grid-template-columns:repeat(${cols},1fr);column-gap:${gapX}px;row-gap:${gapY}px;`;
+      const imgStyle = borderWidth ? ` style="border:${borderWidth}px solid ${borderColor};"` : "";
       return `<section ${attrs} class="gallery-section">
   <div class="container">
     <h2 class="section__title section__title--center reveal">${esc(c.title)}</h2>
-    <div class="gallery">
-      ${((c.images ?? []) as string[]).map((url) => `<img class="gallery__image reveal" src="${assetPath(url)}" alt="" loading="lazy">`).join("\n")}
+    <div class="gallery gallery--fx-${fx} gallery--cap-${cap}" style="${gridStyle}">
+      ${images
+        .map(
+          (img) => `<figure class="gallery__item reveal">
+        <img class="gallery__image" src="${assetPath(img.url)}" alt="${esc(img.caption ?? "")}" loading="lazy"${imgStyle}>
+        ${img.caption ? `<figcaption class="gallery__caption">${esc(img.caption)}</figcaption>` : ""}
+      </figure>`
+        )
+        .join("\n")}
     </div>
   </div>
 </section>`;
+    }
 
     case "map":
       return `<section ${attrs} class="map">
@@ -435,11 +456,24 @@ section { padding: 6rem 0; }
 .testimonial__text { font-style: italic; opacity: .88; }
 .testimonial__author { margin-top: 1rem; font-size: .9rem; }
 
-/* Bloque: gallery */
-.gallery { display: grid; gap: 1rem; margin-top: 3rem; grid-template-columns: repeat(2, 1fr); }
-@media (min-width: 768px) { .gallery { grid-template-columns: repeat(3, 1fr); } }
-.gallery__image { aspect-ratio: 1; object-fit: cover; border-radius: 16px; transition: transform .3s; }
-.gallery__image:hover { transform: scale(1.03); }
+/* Bloque: gallery (cuadrícula, espaciados y borde van inline desde el builder) */
+.gallery { display: grid; margin-top: 3rem; }
+.gallery__item { position: relative; overflow: hidden; border-radius: 16px; margin: 0; }
+.gallery__image { aspect-ratio: 1; width: 100%; object-fit: cover; display: block; border-radius: 16px; transition: transform .35s ease, filter .35s ease; }
+.gallery__caption { position: absolute; left: 0; right: 0; bottom: 0; padding: .9rem; color: #fff; font-size: .85rem; background: linear-gradient(transparent, rgba(0,0,0,.75)); border-radius: 0 0 16px 16px; transition: opacity .3s; }
+/* Modificadores: texto sobre la imagen */
+.gallery--cap-hover .gallery__caption { opacity: 0; }
+.gallery--cap-hover .gallery__item:hover .gallery__caption { opacity: 1; }
+.gallery--cap-none .gallery__caption { display: none; }
+/* Modificadores: efecto hover */
+.gallery--fx-zoom .gallery__item:hover .gallery__image { transform: scale(1.07); }
+.gallery--fx-lift .gallery__item { transition: transform .3s, box-shadow .3s; }
+.gallery--fx-lift .gallery__item:hover { transform: translateY(-6px); box-shadow: 0 16px 32px rgba(0,0,0,.25); }
+.gallery--fx-gray .gallery__image { filter: grayscale(1); }
+.gallery--fx-gray .gallery__item:hover .gallery__image { filter: grayscale(0); }
+.gallery--fx-dark .gallery__image { filter: brightness(.72); }
+.gallery--fx-dark .gallery__item:hover .gallery__image { filter: brightness(1); }
+@media (max-width: 640px) { .gallery { grid-template-columns: repeat(2, 1fr) !important; } }
 
 /* Bloque: map */
 .map__frame { width: 100%; height: 380px; border: 0; border-radius: 20px; margin-top: 2rem; }

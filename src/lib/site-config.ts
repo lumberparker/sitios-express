@@ -159,7 +159,18 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
         ],
       };
     case "gallery":
-      return { title: "Galería", images: [] };
+      // images: [{ url, caption }] — se limita a columns² fotos (grid N×N)
+      return {
+        title: "Galería",
+        images: [],
+        columns: 3,
+        gapX: 12,
+        gapY: 12,
+        borderWidth: 0,
+        borderColor: "#ffffff",
+        hoverEffect: "zoom", // none | zoom | lift | gray | dark
+        captionMode: "hover", // none | hover | always
+      };
     case "map":
       return { title: "Encuéntranos", address: "", embedUrl: "" };
     case "faq":

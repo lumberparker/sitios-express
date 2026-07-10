@@ -670,9 +670,7 @@ function SectionEditor({
           {(section.type === "products" || section.type === "testimonials" || section.type === "faq") && (
             <ItemsEditor section={section} onChange={onChange} />
           )}
-          {section.type === "gallery" && (
-            <GalleryEditor images={c.images ?? []} onChange={(imgs) => onChange((s) => (s.content.images = imgs))} />
-          )}
+          {section.type === "gallery" && <GalleryEditor section={section} onChange={onChange} />}
 
           {/* Estilo */}
           <div className="rounded-lg bg-slate-50 p-3">
@@ -796,23 +794,117 @@ function ItemsEditor({ section, onChange }: { section: Section; onChange: (fn: (
   );
 }
 
-function GalleryEditor({ images, onChange }: { images: string[]; onChange: (imgs: string[]) => void }) {
+function GalleryEditor({ section, onChange }: { section: Section; onChange: (fn: (s: Section) => void) => void }) {
+  const c = section.content;
+  const cols = Math.min(10, Math.max(2, Number(c.columns) || 3));
+  const images: { url: string; caption?: string }[] = ((c.images as any[]) ?? [])
+    .map((i) => (typeof i === "string" ? { url: i } : i))
+    .filter((i) => i?.url);
+  const max = cols * cols;
+  const set = (k: string, v: any) => onChange((s) => (s.content[k] = v));
+  const setImages = (imgs: { url: string; caption?: string }[]) => set("images", imgs);
+
   return (
-    <div>
-      <ImageField label="Agregar foto" value="" onUploaded={(url) => onChange([...images, url])} />
-      <div className="mt-2 grid grid-cols-4 gap-2">
-        {images.map((url, i) => (
-          <div key={i} className="group relative">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={url} alt="" className="aspect-square w-full rounded object-cover" />
-            <button
-              onClick={() => onChange(images.filter((_, j) => j !== i))}
-              className="absolute right-0.5 top-0.5 hidden rounded bg-black/60 px-1 text-xs text-white group-hover:block"
-            >
-              ✕
-            </button>
-          </div>
-        ))}
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <Label>Cuadrícula</Label>
+          <select
+            value={cols}
+            onChange={(e) => set("columns", Number(e.target.value))}
+            className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+          >
+            {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => (
+              <option key={n} value={n}>
+                {n} × {n} (hasta {n * n} fotos)
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <Label>Efecto al pasar el mouse</Label>
+          <select
+            value={c.hoverEffect ?? "zoom"}
+            onChange={(e) => set("hoverEffect", e.target.value)}
+            className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+          >
+            <option value="none">Ninguno</option>
+            <option value="zoom">Zoom</option>
+            <option value="lift">Elevar con sombra</option>
+            <option value="gray">Gris → color</option>
+            <option value="dark">Oscuro → claro</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <Label>Espacio horizontal ({Number(c.gapX ?? 12)}px)</Label>
+          <input type="range" min={0} max={48} value={Number(c.gapX ?? 12)} onChange={(e) => set("gapX", Number(e.target.value))} className="w-full" />
+        </div>
+        <div>
+          <Label>Espacio vertical ({Number(c.gapY ?? 12)}px)</Label>
+          <input type="range" min={0} max={48} value={Number(c.gapY ?? 12)} onChange={(e) => set("gapY", Number(e.target.value))} className="w-full" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <Label>Borde ({Number(c.borderWidth ?? 0)}px)</Label>
+          <input type="range" min={0} max={10} value={Number(c.borderWidth ?? 0)} onChange={(e) => set("borderWidth", Number(e.target.value))} className="w-full" />
+        </div>
+        <div>
+          <Label>Color del borde</Label>
+          <input
+            type="color"
+            value={c.borderColor || "#ffffff"}
+            onChange={(e) => set("borderColor", e.target.value)}
+            className="h-9 w-full cursor-pointer rounded border border-slate-200"
+            disabled={!Number(c.borderWidth ?? 0)}
+          />
+        </div>
+      </div>
+
+      <div>
+        <Label>Texto sobre la imagen</Label>
+        <select
+          value={c.captionMode ?? "hover"}
+          onChange={(e) => set("captionMode", e.target.value)}
+          className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+        >
+          <option value="none">Sin texto</option>
+          <option value="hover">Mostrar al pasar el mouse</option>
+          <option value="always">Siempre visible</option>
+        </select>
+      </div>
+
+      <div>
+        <Label>
+          Fotos ({images.length} de {max})
+        </Label>
+        {images.length >= max ? (
+          <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-700">
+            Cuadrícula llena. Cambia a una cuadrícula más grande o quita una foto.
+          </p>
+        ) : (
+          <ImageField label="Agregar foto" value="" onUploaded={(url) => setImages([...images, { url, caption: "" }])} />
+        )}
+        <div className="mt-2 space-y-2">
+          {images.map((img, i) => (
+            <div key={i} className="flex items-center gap-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={img.url} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
+              <Input
+                placeholder="Texto de esta foto (opcional)"
+                value={img.caption ?? ""}
+                onChange={(e) => setImages(images.map((x, j) => (j === i ? { ...x, caption: e.target.value } : x)))}
+              />
+              <button onClick={() => setImages(images.filter((_, j) => j !== i))} className="shrink-0 text-xs text-rose-500 hover:underline">
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
