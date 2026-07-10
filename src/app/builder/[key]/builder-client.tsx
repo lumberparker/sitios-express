@@ -1150,6 +1150,15 @@ function SectionEditor({
           {section.type === "contact" && (
             <div><Label>Subtítulo</Label><Input value={c.subtitle ?? ""} onChange={setContent("subtitle")} /></div>
           )}
+          {section.type === "quote" && (
+            <>
+              <div>
+                <Label>Subtítulo</Label>
+                <Input value={c.subtitle ?? ""} onChange={setContent("subtitle")} placeholder="Instrucciones para el cliente…" />
+              </div>
+              <QuoteEditor section={section} onChange={onChange} />
+            </>
+          )}
           {section.type === "products" && (
             <div>
               <Label>Esquinas redondeadas ({Number(c.radius ?? 20)}px)</Label>
@@ -1769,6 +1778,226 @@ function LogoField({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// --- Cotizador ---------------------------------------------------------------
+
+type QuoteProduct = { name: string; price: number; description?: string };
+type QuoteCategory = {
+  name: string;
+  mode?: "multi" | "single";
+  products: QuoteProduct[];
+};
+
+/** Normaliza cotizadores viejos (options[]) al formato por categorías. */
+export function normalizeQuoteCategories(content: Record<string, any>): QuoteCategory[] {
+  if (Array.isArray(content.categories) && content.categories.length > 0) {
+    return content.categories.map((cat: any) => ({
+      name: String(cat?.name ?? "Categoría"),
+      mode: cat?.mode === "single" ? "single" : "multi",
+      products: Array.isArray(cat?.products)
+        ? cat.products.map((p: any) => ({
+            name: String(p?.name ?? "Producto"),
+            price: Number(p?.price) || 0,
+            description: String(p?.description ?? ""),
+          }))
+        : [],
+    }));
+  }
+  // Compat: options: [{ label, price }]
+  const options = Array.isArray(content.options) ? content.options : [];
+  if (options.length > 0) {
+    return [
+      {
+        name: "Opciones",
+        mode: "multi",
+        products: options.map((o: any) => ({
+          name: String(o?.label ?? o?.name ?? "Opción"),
+          price: Number(o?.price) || 0,
+          description: "",
+        })),
+      },
+    ];
+  }
+  return [
+    {
+      name: "Productos",
+      mode: "multi",
+      products: [{ name: "Producto ejemplo", price: 100, description: "" }],
+    },
+  ];
+}
+
+function QuoteEditor({ section, onChange }: { section: Section; onChange: (fn: (s: Section) => void) => void }) {
+  const c = section.content;
+  const categories = normalizeQuoteCategories(c);
+  const currency = c.currency ?? "$";
+
+  function setCategories(next: QuoteCategory[]) {
+    onChange((s) => {
+      s.content.categories = next;
+      // Dejar de depender del formato viejo
+      delete s.content.options;
+    });
+  }
+
+  function patchCategory(ci: number, patch: Partial<QuoteCategory>) {
+    setCategories(categories.map((cat, i) => (i === ci ? { ...cat, ...patch } : cat)));
+  }
+
+  function patchProduct(ci: number, pi: number, patch: Partial<QuoteProduct>) {
+    setCategories(
+      categories.map((cat, i) =>
+        i === ci
+          ? {
+              ...cat,
+              products: cat.products.map((p, j) => (j === pi ? { ...p, ...patch } : p)),
+            }
+          : cat
+      )
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <Label>Precio base ({currency})</Label>
+          <Input
+            type="number"
+            min={0}
+            value={String(c.basePrice ?? 0)}
+            onChange={(e) => onChange((s) => (s.content.basePrice = Number(e.target.value) || 0))}
+            placeholder="0"
+          />
+          <p className="mt-0.5 text-[11px] text-slate-400">Cargo fijo opcional (0 = sin base).</p>
+        </div>
+        <div>
+          <Label>Símbolo de moneda</Label>
+          <Input
+            value={currency}
+            onChange={(e) => onChange((s) => (s.content.currency = e.target.value))}
+            placeholder="$"
+          />
+        </div>
+      </div>
+
+      <p className="text-[11px] text-slate-500">
+        Agrupa por <b>tipo de producto</b>. El visitante puede elegir varios productos y cantidades dentro de cada tipo
+        (o solo uno si eliges “uno solo”).
+      </p>
+
+      {categories.map((cat, ci) => (
+        <div key={ci} className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1 space-y-2">
+              <div>
+                <Label className="text-xs">Nombre del tipo / categoría</Label>
+                <Input
+                  value={cat.name}
+                  onChange={(e) => patchCategory(ci, { name: e.target.value })}
+                  placeholder="Ej. Paquetes, Extras, Materiales…"
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Selección</Label>
+                <select
+                  value={cat.mode ?? "multi"}
+                  onChange={(e) => patchCategory(ci, { mode: e.target.value as "multi" | "single" })}
+                  className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+                >
+                  <option value="multi">Varios productos + cantidad</option>
+                  <option value="single">Solo un producto de este tipo</option>
+                </select>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCategories(categories.filter((_, i) => i !== ci))}
+              className="shrink-0 text-xs text-rose-500 hover:underline"
+              disabled={categories.length <= 1}
+            >
+              Quitar tipo
+            </button>
+          </div>
+
+          <div className="space-y-2 border-t border-slate-100 pt-2">
+            <Label className="text-xs">Productos ({cat.products.length})</Label>
+            {cat.products.map((p, pi) => (
+              <div key={pi} className="space-y-1.5 rounded-lg border border-slate-100 bg-slate-50 p-2">
+                <div className="flex items-center gap-2">
+                  <Input
+                    className="flex-1"
+                    value={p.name}
+                    onChange={(e) => patchProduct(ci, pi, { name: e.target.value })}
+                    placeholder="Nombre del producto"
+                  />
+                  <div className="w-28 shrink-0">
+                    <Input
+                      type="number"
+                      min={0}
+                      value={String(p.price ?? 0)}
+                      onChange={(e) => patchProduct(ci, pi, { price: Number(e.target.value) || 0 })}
+                      placeholder="Precio"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      patchCategory(ci, {
+                        products: cat.products.filter((_, j) => j !== pi),
+                      })
+                    }
+                    className="shrink-0 text-xs text-rose-500 hover:underline"
+                    disabled={cat.products.length <= 1}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <Input
+                  value={p.description ?? ""}
+                  onChange={(e) => patchProduct(ci, pi, { description: e.target.value })}
+                  placeholder="Descripción breve (opcional)"
+                />
+                <p className="text-[10px] text-slate-400">
+                  {currency}
+                  {Number(p.price) || 0} c/u
+                </p>
+              </div>
+            ))}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                patchCategory(ci, {
+                  products: [...cat.products, { name: "Nuevo producto", price: 0, description: "" }],
+                })
+              }
+            >
+              + Agregar producto
+            </Button>
+          </div>
+        </div>
+      ))}
+
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() =>
+          setCategories([
+            ...categories,
+            {
+              name: "Nuevo tipo",
+              mode: "multi",
+              products: [{ name: "Producto", price: 0, description: "" }],
+            },
+          ])
+        }
+      >
+        + Agregar tipo de producto
+      </Button>
     </div>
   );
 }

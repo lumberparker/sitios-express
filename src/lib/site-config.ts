@@ -472,12 +472,31 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
     case "contact":
       return { title: "Contáctanos", subtitle: "Te respondemos en menos de 24 horas." };
     case "quote":
+      // Cotizador: categorías (tipos de producto) con varios productos y cantidad
       return {
         title: "Cotiza en línea",
-        basePrice: 100,
-        options: [
-          { label: "Opción A", price: 50 },
-          { label: "Opción B", price: 80 },
+        subtitle: "Elige productos y cantidades. El total se actualiza al instante.",
+        basePrice: 0,
+        currency: "$",
+        categories: [
+          {
+            name: "Tipo de servicio",
+            // multi = varios productos a la vez con cantidad; single = solo uno del grupo
+            mode: "multi",
+            products: [
+              { name: "Servicio básico", price: 500, description: "Incluye lo esencial" },
+              { name: "Servicio premium", price: 900, description: "Con extras incluidos" },
+              { name: "Servicio express", price: 1200, description: "Entrega prioritaria" },
+            ],
+          },
+          {
+            name: "Extras",
+            mode: "multi",
+            products: [
+              { name: "Diseño adicional", price: 200, description: "" },
+              { name: "Soporte 1 mes", price: 150, description: "" },
+            ],
+          },
         ],
       };
     case "custom":

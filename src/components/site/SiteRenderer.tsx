@@ -873,12 +873,86 @@ function CarouselSection({ section, heading }: { section: Section; heading: Reac
   );
 }
 
+type QuoteProduct = { name: string; price: number; description?: string };
+type QuoteCategory = { name: string; mode?: "multi" | "single"; products: QuoteProduct[] };
+
+function quoteCategoriesFromContent(c: Record<string, any>): QuoteCategory[] {
+  if (Array.isArray(c.categories) && c.categories.length > 0) {
+    return c.categories.map((cat: any) => ({
+      name: String(cat?.name ?? "Categoría"),
+      mode: cat?.mode === "single" ? "single" : "multi",
+      products: Array.isArray(cat?.products)
+        ? cat.products.map((p: any) => ({
+            name: String(p?.name ?? "Producto"),
+            price: Number(p?.price) || 0,
+            description: String(p?.description ?? ""),
+          }))
+        : [],
+    }));
+  }
+  const options = Array.isArray(c.options) ? c.options : [];
+  if (options.length > 0) {
+    return [
+      {
+        name: "Opciones",
+        mode: "multi" as const,
+        products: options.map((o: any) => ({
+          name: String(o?.label ?? o?.name ?? "Opción"),
+          price: Number(o?.price) || 0,
+          description: "",
+        })),
+      },
+    ];
+  }
+  return [];
+}
+
 function QuoteSection({ section, tpl, accent, heading }: { section: Section; tpl: TemplateConfig; accent: string; heading: React.CSSProperties }) {
   const c = section.content;
-  const [selected, setSelected] = useState<number[]>([]);
+  const currency = String(c.currency ?? "$");
   const base = Number(c.basePrice) || 0;
-  const options: { label: string; price: number }[] = c.options ?? [];
-  const total = base + selected.reduce((acc, i) => acc + (Number(options[i]?.price) || 0), 0);
+  const categories = quoteCategoriesFromContent(c);
+  // qty[catIndex][productIndex] = cantidad
+  const [qty, setQty] = useState<Record<string, number>>({});
+
+  function key(ci: number, pi: number) {
+    return `${ci}:${pi}`;
+  }
+  function getQty(ci: number, pi: number) {
+    return Math.max(0, Number(qty[key(ci, pi)]) || 0);
+  }
+  function setProductQty(ci: number, pi: number, mode: "multi" | "single", next: number) {
+    const n = Math.max(0, Math.min(99, Math.floor(next)));
+    setQty((prev) => {
+      const copy = { ...prev };
+      if (mode === "single") {
+        // Solo un producto del grupo puede tener cantidad > 0
+        const cat = categories[ci];
+        cat?.products.forEach((_, j) => {
+          copy[key(ci, j)] = j === pi ? n : 0;
+        });
+      } else {
+        copy[key(ci, pi)] = n;
+      }
+      return copy;
+    });
+  }
+
+  let total = base;
+  const lines: { name: string; qty: number; unit: number; sub: number }[] = [];
+  categories.forEach((cat, ci) => {
+    cat.products.forEach((p, pi) => {
+      const q = getQty(ci, pi);
+      if (q > 0) {
+        const unit = Number(p.price) || 0;
+        const sub = unit * q;
+        total += sub;
+        lines.push({ name: p.name, qty: q, unit, sub });
+      }
+    });
+  });
+
+  const money = (n: number) => `${currency}${n.toLocaleString("es-MX")}`;
 
   return (
     <div className="mx-auto max-w-2xl px-6 py-24">
@@ -886,29 +960,120 @@ function QuoteSection({ section, tpl, accent, heading }: { section: Section; tpl
         <h2 className="text-center text-3xl font-bold md:text-4xl" style={heading}>
           {c.title}
         </h2>
+        {c.subtitle && <p className="mx-auto mt-3 max-w-lg text-center text-sm opacity-75">{c.subtitle}</p>}
       </Reveal>
       <Reveal delay={0.1}>
-        <div className="mt-10 p-8" style={cardStyle(section, tpl)}>
-          <p className="text-sm opacity-70">Precio base: ${base}</p>
-          <div className="mt-4 space-y-3">
-            {options.map((opt, i) => (
-              <label key={i} className="flex cursor-pointer items-center justify-between rounded-lg border border-current/15 px-4 py-3 text-sm">
-                <span className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(i)}
-                    onChange={(e) => setSelected((s) => (e.target.checked ? [...s, i] : s.filter((x) => x !== i)))}
-                  />
-                  {opt.label}
-                </span>
-                <span className="font-semibold">+${opt.price}</span>
-              </label>
-            ))}
-          </div>
-          <div className="mt-6 flex items-center justify-between border-t border-current/10 pt-4">
+        <div className="mt-10 space-y-8 p-6 md:p-8" style={cardStyle(section, tpl)}>
+          {base > 0 && (
+            <p className="text-sm opacity-70">
+              Precio base: <b>{money(base)}</b>
+            </p>
+          )}
+
+          {categories.length === 0 && (
+            <p className="text-sm opacity-50">Agrega tipos de producto y precios en el builder.</p>
+          )}
+
+          {categories.map((cat, ci) => (
+            <div key={ci}>
+              <h3 className="text-sm font-semibold tracking-wide opacity-80">{cat.name}</h3>
+              <p className="mt-0.5 text-xs opacity-50">
+                {cat.mode === "single" ? "Elige un producto" : "Puedes combinar varios y definir cantidades"}
+              </p>
+              <div className="mt-3 space-y-2">
+                {cat.products.map((p, pi) => {
+                  const q = getQty(ci, pi);
+                  const mode = cat.mode === "single" ? "single" : "multi";
+                  return (
+                    <div
+                      key={pi}
+                      className={`flex flex-col gap-2 rounded-lg border px-3 py-3 sm:flex-row sm:items-center sm:justify-between ${
+                        q > 0 ? "border-current/30 bg-current/5" : "border-current/15"
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-2 sm:justify-start sm:gap-3">
+                          <span className="text-sm font-medium">{p.name}</span>
+                          <span className="shrink-0 text-sm font-semibold" style={{ color: accent }}>
+                            {money(Number(p.price) || 0)}
+                            <span className="text-xs font-normal opacity-60"> c/u</span>
+                          </span>
+                        </div>
+                        {p.description ? <p className="mt-0.5 text-xs opacity-60">{p.description}</p> : null}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {mode === "single" ? (
+                          <label className="flex cursor-pointer items-center gap-2 text-sm">
+                            <input
+                              type="radio"
+                              name={`quote-cat-${section.id}-${ci}`}
+                              checked={q > 0}
+                              onChange={() => setProductQty(ci, pi, "single", 1)}
+                            />
+                            <span className="opacity-70">Elegir</span>
+                            {q > 0 && (
+                              <button
+                                type="button"
+                                className="text-xs opacity-50 underline"
+                                onClick={() => setProductQty(ci, pi, "single", 0)}
+                              >
+                                Quitar
+                              </button>
+                            )}
+                          </label>
+                        ) : (
+                          <div className="flex items-center rounded-lg border border-current/20">
+                            <button
+                              type="button"
+                              aria-label="Menos"
+                              className="px-3 py-1.5 text-lg leading-none opacity-70 hover:opacity-100 disabled:opacity-30"
+                              disabled={q <= 0}
+                              onClick={() => setProductQty(ci, pi, "multi", q - 1)}
+                            >
+                              −
+                            </button>
+                            <span className="min-w-[2rem] text-center text-sm font-semibold tabular-nums">{q}</span>
+                            <button
+                              type="button"
+                              aria-label="Más"
+                              className="px-3 py-1.5 text-lg leading-none opacity-70 hover:opacity-100"
+                              onClick={() => setProductQty(ci, pi, "multi", q + 1)}
+                            >
+                              +
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+
+          {lines.length > 0 && (
+            <ul className="space-y-1 border-t border-current/10 pt-4 text-xs opacity-70">
+              {base > 0 && (
+                <li className="flex justify-between">
+                  <span>Precio base</span>
+                  <span>{money(base)}</span>
+                </li>
+              )}
+              {lines.map((l, i) => (
+                <li key={i} className="flex justify-between gap-2">
+                  <span>
+                    {l.name} ×{l.qty}
+                  </span>
+                  <span>{money(l.sub)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="flex items-center justify-between border-t border-current/10 pt-4">
             <span className="font-semibold">Total estimado</span>
-            <span className="text-2xl font-bold" style={{ color: accent }}>
-              ${total}
+            <span className="text-2xl font-bold tabular-nums" style={{ color: accent }}>
+              {money(total)}
             </span>
           </div>
         </div>

@@ -390,18 +390,78 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
 </section>`;
 
     case "quote": {
-      const options: any[] = c.options ?? [];
+      const currency = esc(c.currency ?? "$");
+      const base = Number(c.basePrice) || 0;
+      // Categorías nuevas o compat options[]
+      let categories: { name: string; mode: string; products: { name: string; price: number; description: string }[] }[] = [];
+      if (Array.isArray(c.categories) && c.categories.length > 0) {
+        categories = c.categories.map((cat: any) => ({
+          name: String(cat?.name ?? "Categoría"),
+          mode: cat?.mode === "single" ? "single" : "multi",
+          products: Array.isArray(cat?.products)
+            ? cat.products.map((p: any) => ({
+                name: String(p?.name ?? "Producto"),
+                price: Number(p?.price) || 0,
+                description: String(p?.description ?? ""),
+              }))
+            : [],
+        }));
+      } else if (Array.isArray(c.options) && c.options.length > 0) {
+        categories = [
+          {
+            name: "Opciones",
+            mode: "multi",
+            products: c.options.map((o: any) => ({
+              name: String(o?.label ?? o?.name ?? "Opción"),
+              price: Number(o?.price) || 0,
+              description: "",
+            })),
+          },
+        ];
+      }
+      const catsHtml = categories
+        .map((cat, ci) => {
+          const productsHtml = cat.products
+            .map((p, pi) => {
+              if (cat.mode === "single") {
+                return `<div class="quote__product" data-price="${p.price}">
+          <div class="quote__product-info">
+            <span class="quote__product-name">${esc(p.name)}</span>
+            ${p.description ? `<span class="quote__product-desc">${esc(p.description)}</span>` : ""}
+            <span class="quote__product-unit">${currency}${p.price} c/u</span>
+          </div>
+          <label class="quote__pick"><input type="radio" name="quote-${section.id}-c${ci}" data-cat="${ci}" data-price="${p.price}" data-mode="single"> Elegir</label>
+        </div>`;
+              }
+              return `<div class="quote__product" data-price="${p.price}">
+          <div class="quote__product-info">
+            <span class="quote__product-name">${esc(p.name)}</span>
+            ${p.description ? `<span class="quote__product-desc">${esc(p.description)}</span>` : ""}
+            <span class="quote__product-unit">${currency}${p.price} c/u</span>
+          </div>
+          <div class="quote__qty" data-mode="multi">
+            <button type="button" class="quote__qty-btn" data-delta="-1" aria-label="Menos">−</button>
+            <input class="quote__qty-input" type="number" min="0" max="99" value="0" data-price="${p.price}" data-cat="${ci}" data-mode="multi" readonly>
+            <button type="button" class="quote__qty-btn" data-delta="1" aria-label="Más">+</button>
+          </div>
+        </div>`;
+            })
+            .join("\n");
+          return `<div class="quote__category" data-cat="${ci}" data-mode="${cat.mode}">
+        <h3 class="quote__category-title">${esc(cat.name)}</h3>
+        <p class="quote__category-hint">${cat.mode === "single" ? "Elige un producto" : "Puedes combinar varios y definir cantidades"}</p>
+        ${productsHtml}
+      </div>`;
+        })
+        .join("\n");
       return `<section ${attrs} class="quote">
   <div class="container container--narrow">
     <h2 class="section__title section__title--center reveal">${esc(c.title)}</h2>
-    <div class="card card__body quote__box reveal" data-quote data-base="${Number(c.basePrice) || 0}">
-      <p class="quote__base">Precio base: $${Number(c.basePrice) || 0}</p>
-      ${options
-        .map(
-          (o: any) => `<label class="quote__option"><span class="quote__option-label"><input type="checkbox" data-price="${Number(o.price) || 0}"> ${esc(o.label)}</span><b class="quote__option-price">+$${Number(o.price) || 0}</b></label>`
-        )
-        .join("\n")}
-      <div class="quote__total"><span>Total estimado</span><span class="quote__total-amount" data-total>$${Number(c.basePrice) || 0}</span></div>
+    ${c.subtitle ? `<p class="section__lead section__lead--center">${esc(c.subtitle)}</p>` : ""}
+    <div class="card card__body quote__box reveal" data-quote data-base="${base}" data-currency="${currency}">
+      ${base > 0 ? `<p class="quote__base">Precio base: ${currency}${base}</p>` : ""}
+      ${catsHtml}
+      <div class="quote__total"><span>Total estimado</span><span class="quote__total-amount" data-total>${currency}${base}</span></div>
     </div>
   </div>
 </section>`;
@@ -693,10 +753,24 @@ section { padding: 6rem 0; }
 .form__input:focus, .form__textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .form__submit { margin-top: .4rem; width: 100%; }
 
-/* Bloque: quote (cotizador) */
+/* Bloque: quote (cotizador por categorías + cantidad) */
 .quote__box { margin-top: 2.5rem; }
-.quote__base { color: var(--muted); font-size: .9rem; }
-.quote__option { display: flex; justify-content: space-between; align-items: center; padding: .8rem 1rem; margin-top: .7rem; border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); border-radius: 10px; cursor: pointer; font-size: .95rem; }
+.quote__base { color: var(--muted); font-size: .9rem; margin-bottom: 1rem; }
+.quote__category { margin-top: 1.5rem; }
+.quote__category:first-of-type { margin-top: .5rem; }
+.quote__category-title { font-size: .95rem; font-weight: 600; opacity: .9; }
+.quote__category-hint { font-size: .75rem; opacity: .5; margin: .15rem 0 .6rem; }
+.quote__product { display: flex; flex-wrap: wrap; gap: .75rem; justify-content: space-between; align-items: center; padding: .85rem 1rem; margin-top: .55rem; border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); border-radius: 10px; font-size: .95rem; }
+.quote__product-info { display: flex; flex-direction: column; gap: .15rem; min-width: 0; flex: 1; }
+.quote__product-name { font-weight: 500; }
+.quote__product-desc { font-size: .8rem; opacity: .6; }
+.quote__product-unit { font-size: .85rem; font-weight: 600; color: var(--accent); }
+.quote__pick { display: flex; align-items: center; gap: .4rem; font-size: .85rem; cursor: pointer; opacity: .8; }
+.quote__qty { display: inline-flex; align-items: center; border: 1px solid color-mix(in srgb, var(--text) 20%, transparent); border-radius: 10px; overflow: hidden; }
+.quote__qty-btn { border: 0; background: transparent; color: inherit; padding: .4rem .75rem; font-size: 1.1rem; cursor: pointer; line-height: 1; opacity: .75; }
+.quote__qty-btn:hover { opacity: 1; }
+.quote__qty-input { width: 2.2rem; border: 0; background: transparent; text-align: center; font-weight: 600; font-size: .9rem; color: inherit; -moz-appearance: textfield; }
+.quote__qty-input::-webkit-outer-spin-button, .quote__qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .quote__total { display: flex; justify-content: space-between; align-items: center; margin-top: 1.4rem; padding-top: 1rem; border-top: 1px solid color-mix(in srgb, var(--text) 10%, transparent); font-weight: 600; }
 .quote__total-amount { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
 
@@ -781,18 +855,39 @@ function buildJs(): string {
     play();
   });
 
-  // Calculadora de cotización
+  // Calculadora de cotización (categorías + cantidad / radio)
   document.querySelectorAll('[data-quote]').forEach(function (box) {
     var base = Number(box.getAttribute('data-base')) || 0;
-    var total = box.querySelector('[data-total]');
+    var currency = box.getAttribute('data-currency') || '$';
+    var totalEl = box.querySelector('[data-total]');
+    function money(n) { return currency + Number(n).toLocaleString('es-MX'); }
     function recalc() {
       var sum = base;
-      box.querySelectorAll('input[type=checkbox]:checked').forEach(function (cb) {
-        sum += Number(cb.getAttribute('data-price')) || 0;
+      box.querySelectorAll('.quote__qty-input').forEach(function (inp) {
+        var q = Math.max(0, Number(inp.value) || 0);
+        sum += q * (Number(inp.getAttribute('data-price')) || 0);
       });
-      if (total) total.textContent = '$' + sum;
+      box.querySelectorAll('input[type=radio][data-mode=single]:checked').forEach(function (rb) {
+        sum += Number(rb.getAttribute('data-price')) || 0;
+      });
+      if (totalEl) totalEl.textContent = money(sum);
     }
-    box.querySelectorAll('input[type=checkbox]').forEach(function (cb) { cb.addEventListener('change', recalc); });
+    box.querySelectorAll('.quote__qty').forEach(function (wrap) {
+      var inp = wrap.querySelector('.quote__qty-input');
+      if (!inp) return;
+      wrap.querySelectorAll('.quote__qty-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var delta = Number(btn.getAttribute('data-delta')) || 0;
+          var next = Math.max(0, Math.min(99, (Number(inp.value) || 0) + delta));
+          inp.value = String(next);
+          recalc();
+        });
+      });
+    });
+    box.querySelectorAll('input[type=radio][data-mode=single]').forEach(function (rb) {
+      rb.addEventListener('change', recalc);
+    });
+    recalc();
   });
 })();
 `;
