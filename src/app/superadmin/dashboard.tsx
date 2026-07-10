@@ -9,7 +9,21 @@ import { formatMoney } from "@/lib/utils";
 
 type WidgetRow = { id: string; slug: string; name: string; description: string; sectionType: string | null; price: number; active: boolean };
 type TemplateRow = { id: string; slug: string; name: string; description: string; basePrice: number; active: boolean; config: unknown };
-type SiteRow = { id: string; editKey: string; name: string; status: string; total: number; paid: number; owner: string; template: string; updatedAt: string };
+type SiteRow = {
+  id: string;
+  editKey: string;
+  name: string;
+  status: string;
+  total: number;
+  paid: number;
+  owner: string;
+  template: string;
+  updatedAt: string;
+  /** Cliente pidió montaje (en línea o con dominio) */
+  montaje: boolean;
+  /** Montaje con dominio propio (le ayudamos con el dominio) */
+  conDominio: boolean;
+};
 
 const STATUS_TONE: Record<string, "amber" | "slate" | "green"> = { DRAFT: "amber", COMPLETED: "slate", PAID: "green" };
 const STATUS_LABEL: Record<string, string> = { DRAFT: "Borrador", COMPLETED: "Completado", PAID: "Pagado" };
@@ -69,6 +83,12 @@ export function SuperAdminDashboard({ templates, widgets, sites }: { templates: 
                   <th className="px-4 py-3">Contacto</th>
                   <th className="px-4 py-3">Template</th>
                   <th className="px-4 py-3">Estado</th>
+                  <th className="px-4 py-3 text-center" title="Montaje en línea (con o sin dominio)">
+                    Montaje
+                  </th>
+                  <th className="px-4 py-3 text-center" title="Montaje con dominio propio: le ayudamos con el dominio">
+                    Con dominio
+                  </th>
                   <th className="px-4 py-3 text-right">Total</th>
                   <th className="px-4 py-3"></th>
                 </tr>
@@ -80,6 +100,12 @@ export function SuperAdminDashboard({ templates, widgets, sites }: { templates: 
                     <td className="px-4 py-3 text-slate-600">{s.owner}</td>
                     <td className="px-4 py-3 text-slate-600">{s.template}</td>
                     <td className="px-4 py-3"><Badge tone={STATUS_TONE[s.status]}>{STATUS_LABEL[s.status]}</Badge></td>
+                    <td className="px-4 py-3 text-center">
+                      <Badge tone={s.montaje ? "green" : "slate"}>{s.montaje ? "Sí" : "No"}</Badge>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <Badge tone={s.conDominio ? "indigo" : "slate"}>{s.conDominio ? "Sí" : "No"}</Badge>
+                    </td>
                     <td className="px-4 py-3 text-right font-semibold">
                       {formatMoney(s.total)}
                       {s.paid > 0 && s.total > s.paid && (
@@ -115,7 +141,7 @@ export function SuperAdminDashboard({ templates, widgets, sites }: { templates: 
                   </tr>
                 ))}
                 {sites.length === 0 && (
-                  <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">Aún no hay sitios creados.</td></tr>
+                  <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">Aún no hay sitios creados.</td></tr>
                 )}
               </tbody>
             </table>

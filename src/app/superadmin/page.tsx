@@ -26,6 +26,12 @@ export default async function SuperAdminPage() {
       widgets={widgets.map((w) => ({ ...w, createdAt: w.createdAt.toISOString() })) as any}
       sites={sites.map((s) => {
         const config = s.config as any;
+        const widgets: { widgetId?: string }[] = Array.isArray(config?.widgets) ? config.widgets : [];
+        const widgetIds = new Set(widgets.map((w) => w.widgetId).filter(Boolean));
+        // Montaje: con o sin dominio; "con dominio" = le ayudamos a publicar con dominio propio
+        const montajeConDominio = widgetIds.has("montaje-con-dominio");
+        const montajeSinDominio = widgetIds.has("montaje-sin-dominio");
+        const montaje = montajeConDominio || montajeSinDominio;
         const waPhone = phoneBySite.get(s.id);
         const contact = waPhone
           ? `WhatsApp ${waPhone}`
@@ -40,6 +46,8 @@ export default async function SuperAdminPage() {
           owner: contact,
           template: s.template.name,
           updatedAt: s.updatedAt.toLocaleDateString("es-MX"),
+          montaje,
+          conDominio: montajeConDominio,
         };
       })}
     />
