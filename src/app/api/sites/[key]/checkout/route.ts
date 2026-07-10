@@ -69,7 +69,7 @@ export async function POST(_req: Request, { params }: { params: { key: string } 
     return NextResponse.json(
       {
         error:
-          "Pagos en línea no disponibles: falta configurar STRIPE_SECRET_KEY en el servidor.",
+          "Stripe no está configurado. En el servidor (archivo .env o variables de Vercel) define STRIPE_SECRET_KEY=sk_test_… (Dashboard Stripe → API keys). Luego reinicia el servidor.",
       },
       { status: 503 }
     );

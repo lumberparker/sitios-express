@@ -61,35 +61,89 @@ export function BuilderClient({
   const [linkCopied, setLinkCopied] = useState(false);
   const [paymentBanner, setPaymentBanner] = useState<"" | "processing" | "paid" | "cancelled">("");
 
-  // Al volver de Stripe (?pago=exitoso) el webhook confirma el pago en
-  // segundos: se muestra un aviso y se consulta el estado hasta verlo PAID.
+  // Al volver de Stripe (?pago=exitoso&session_id=cs_...):
+  // 1) Confirmamos la sesión con Stripe (no depende solo del webhook)
+  // 2) Polling del estado del sitio por si el webhook llega un poco después
   useEffect(() => {
-    const result = new URLSearchParams(window.location.search).get("pago");
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("pago");
+    const sessionId = params.get("session_id") ?? "";
     if (!result) return;
     window.history.replaceState(null, "", window.location.pathname);
+
     if (result === "cancelado") {
       setPaymentBanner("cancelled");
       return;
     }
     if (result !== "exitoso") return;
+
     setPaymentBanner("processing");
-    let tries = 0;
-    const timer = setInterval(async () => {
-      tries += 1;
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    async function applyPaid(paid?: number) {
+      setStatus("PAID");
+      if (paid !== undefined) setPaidTotal(paid);
+      setPaymentBanner("paid");
+    }
+
+    async function confirmWithStripe(): Promise<boolean> {
+      if (!sessionId.startsWith("cs_")) return false;
+      const res = await fetch(`/api/sites/${siteKey}/confirm-payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      }).catch(() => null);
+      if (!res) return false;
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.status === "PAID") {
+        await applyPaid(data.paidTotal);
+        return true;
+      }
+      return false;
+    }
+
+    async function pollSite(): Promise<boolean> {
       const res = await fetch(`/api/sites/${siteKey}`).catch(() => null);
-      if (res?.ok) {
-        const site = await res.json();
-        if (site.status === "PAID") {
-          setStatus("PAID");
-          setPaidTotal(site.invoice?.paidTotal ?? 0);
-          setPaymentBanner("paid");
-          clearInterval(timer);
+      if (!res?.ok) return false;
+      const site = await res.json();
+      if (site.status === "PAID") {
+        await applyPaid(site.invoice?.paidTotal ?? site.invoice?.total ?? 0);
+        return true;
+      }
+      return false;
+    }
+
+    (async () => {
+      if (await confirmWithStripe()) return;
+      if (cancelled) return;
+
+      let tries = 0;
+      timer = setInterval(async () => {
+        if (cancelled) return;
+        tries += 1;
+        if (tries <= 5 && (await confirmWithStripe())) {
+          if (timer) clearInterval(timer);
           return;
         }
-      }
-      if (tries >= 15) clearInterval(timer);
-    }, 3000);
-    return () => clearInterval(timer);
+        if (await pollSite()) {
+          if (timer) clearInterval(timer);
+          return;
+        }
+        if (tries >= 20) {
+          if (timer) clearInterval(timer);
+          setPaymentBanner((b) => (b === "processing" ? "" : b));
+          setError(
+            "El pago puede haberse recibido, pero aún no se refleja. Espera un minuto y recarga la página. Si sigue igual, revisa el webhook de Stripe o contacta soporte."
+          );
+        }
+      }, 2000);
+    })();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

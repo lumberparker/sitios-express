@@ -3,14 +3,27 @@
 // Flujo: el cliente pulsa "Pagar"/"Pagar saldo" → POST /api/sites/[key]/checkout
 // crea una sesión con el monto pendiente → redirección a Stripe → al pagar,
 // Stripe llama a /api/webhooks/stripe y ahí se marca PAID y se desbloquea la
-// descarga. Sin STRIPE_SECRET_KEY configurada, el builder usa el flujo
-// placeholder (registrar solicitud y cobrar fuera de línea).
+// descarga.
+//
+// Requiere en .env (o variables de Vercel):
+//   STRIPE_SECRET_KEY=sk_test_... o sk_live_...
+//   STRIPE_WEBHOOK_SECRET=whsec_...  (para confirmar el pago)
+//   NEXTAUTH_URL=https://tu-dominio.com  (URLs de éxito/cancelación)
 
 import Stripe from "stripe";
 
+/** true si hay una secret key real de Stripe (no vacía ni placeholder). */
+export function isStripeConfigured(): boolean {
+  const key = (process.env.STRIPE_SECRET_KEY ?? "").trim();
+  if (!key) return false;
+  // Placeholders del .env.example
+  if (key.includes("...") || key.includes("sk_test_o_sk_live")) return false;
+  return key.startsWith("sk_test_") || key.startsWith("sk_live_");
+}
+
 export function stripeClient(): Stripe | null {
-  const key = process.env.STRIPE_SECRET_KEY;
-  return key ? new Stripe(key) : null;
+  if (!isStripeConfigured()) return null;
+  return new Stripe(process.env.STRIPE_SECRET_KEY!.trim());
 }
 
 function appUrl() {
@@ -44,8 +57,13 @@ export async function createCheckoutSession(args: {
     ],
     // Los métodos de pago (tarjeta, OXXO, SPEI…) se controlan desde el
     // dashboard de Stripe, no aquí.
-    metadata: { siteId: args.siteId },
-    success_url: `${appUrl()}/builder/${args.editKey}?pago=exitoso`,
+    metadata: {
+      siteId: args.siteId,
+      editKey: args.editKey,
+    },
+    // {CHECKOUT_SESSION_ID} lo sustituye Stripe; el builder confirma el pago
+    // con esa sesión aunque el webhook falle o se demore.
+    success_url: `${appUrl()}/builder/${args.editKey}?pago=exitoso&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${appUrl()}/builder/${args.editKey}?pago=cancelado`,
   });
 
