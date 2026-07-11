@@ -9,6 +9,8 @@ import { formatMoney } from "@/lib/utils";
 import {
   cardRadiusPx,
   makeSection,
+  overlayFromPercent,
+  overlayOpacityPercent,
   SECTION_LABELS,
   type Section,
   type SectionType,
@@ -1114,21 +1116,44 @@ function SectionEditor({
           {section.type === "hero" && (
             <>
               <div><Label>Subtítulo</Label><Textarea rows={2} value={c.subtitle ?? ""} onChange={setContent("subtitle")} /></div>
-              <div className="grid grid-cols-2 gap-2">
-                <div><Label>Texto del botón</Label><Input value={c.ctaText ?? ""} onChange={setContent("ctaText")} /></div>
-                <div>
-                  <Label>Enlace del botón</Label>
-                  <Input
-                    value={c.ctaLink ?? ""}
-                    onChange={setContent("ctaLink")}
-                    placeholder="Vacío = WhatsApp del negocio"
-                  />
-                </div>
-              </div>
-              <p className="text-[11px] text-slate-500">
-                Por defecto, <b>Contáctanos</b> abre un chat de WhatsApp con el número del negocio
-                (Negocio → WhatsApp). Solo llena el enlace si quieres mandar a otra URL.
-              </p>
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={Boolean(String(c.ctaText ?? "").trim())}
+                  onChange={(e) =>
+                    onChange((s) => {
+                      if (e.target.checked) {
+                        s.content.ctaText = String(s.content.ctaText ?? "").trim() || "Contáctanos";
+                      } else {
+                        s.content.ctaText = "";
+                      }
+                    })
+                  }
+                />
+                Mostrar botón de contacto
+              </label>
+              {Boolean(String(c.ctaText ?? "").trim()) && (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label>Texto del botón</Label>
+                      <Input value={c.ctaText ?? ""} onChange={setContent("ctaText")} />
+                    </div>
+                    <div>
+                      <Label>Enlace del botón</Label>
+                      <Input
+                        value={c.ctaLink ?? ""}
+                        onChange={setContent("ctaLink")}
+                        placeholder="Vacío = WhatsApp del negocio"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    El botón es opcional. Por defecto abre un chat de WhatsApp con el número del negocio
+                    (Negocio → WhatsApp). Solo llena el enlace si quieres mandar a otra URL.
+                  </p>
+                </>
+              )}
             </>
           )}
           {section.type === "about" && (
@@ -1174,7 +1199,46 @@ function SectionEditor({
               <Input placeholder="linear-gradient(135deg, #667eea, #764ba2)" value={section.style.background.value} onChange={(e) => onChange((s) => (s.style.background.value = e.target.value))} />
             )}
             {section.style.background.type === "image" && (
-              <ImageField label="Imagen de fondo" value={section.style.background.value} onUploaded={(url) => onChange((s) => { s.style.background.value = url; s.style.background.overlay = s.style.background.overlay || "rgba(0,0,0,.5)"; })} />
+              <>
+                <ImageField
+                  label="Imagen de fondo"
+                  value={section.style.background.value}
+                  onUploaded={(url) =>
+                    onChange((s) => {
+                      s.style.background.value = url;
+                      // Default 45% si aún no hay overlay configurado
+                      if (s.style.background.overlay === undefined || s.style.background.overlay === "") {
+                        s.style.background.overlay = overlayFromPercent(45);
+                      }
+                    })
+                  }
+                />
+                {section.style.background.value && (
+                  <div className="mt-2">
+                    <Label>
+                      Oscuridad del overlay ({overlayOpacityPercent(section.style.background.overlay)}%)
+                    </Label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={90}
+                      step={5}
+                      value={overlayOpacityPercent(section.style.background.overlay)}
+                      onChange={(e) =>
+                        onChange((s) => {
+                          const next = overlayFromPercent(Number(e.target.value));
+                          if (next) s.style.background.overlay = next;
+                          else delete s.style.background.overlay;
+                        })
+                      }
+                      className="w-full"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      0% = imagen sin capa oscura. Sube el valor para que el texto se lea mejor.
+                    </p>
+                  </div>
+                )}
+              </>
             )}
             <div className="mt-2 grid grid-cols-2 gap-2">
               <div>

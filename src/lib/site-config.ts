@@ -10,9 +10,27 @@ export const BackgroundSchema = z.object({
   type: z.enum(["solid", "gradient", "image"]),
   // solid: "#0f172a" | gradient: "linear-gradient(...)" | image: url
   value: z.string().default(""),
-  // Overlay rgba sobre imágenes para garantizar contraste
+  // Overlay rgba sobre imágenes para garantizar contraste (ej. "rgba(0,0,0,.45)")
   overlay: z.string().optional(),
 });
+
+/** Opacidad del overlay de imagen (0–100). Lee el alpha de un rgba/rgb. */
+export function overlayOpacityPercent(overlay?: string | null): number {
+  if (!overlay?.trim()) return 0;
+  const m = overlay.match(/rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+(?:\s*,\s*([\d.]+))?\s*\)/i);
+  if (m) {
+    const alpha = m[1] !== undefined ? parseFloat(m[1]) : 1;
+    if (Number.isFinite(alpha)) return Math.round(Math.min(1, Math.max(0, alpha)) * 100);
+  }
+  return 50;
+}
+
+/** Genera overlay negro con la opacidad dada. 0 = sin overlay. */
+export function overlayFromPercent(percent: number): string | undefined {
+  const p = Math.min(100, Math.max(0, Math.round(percent)));
+  if (p <= 0) return undefined;
+  return `rgba(0,0,0,${(p / 100).toFixed(2)})`;
+}
 
 export const SectionStyleSchema = z.object({
   background: BackgroundSchema.default({ type: "solid", value: "" }),
@@ -203,8 +221,8 @@ export function defaultSectionContent(type: SectionType, businessName = ""): Rec
       return {
         title: businessName || "Tu negocio, en grande",
         subtitle: "Cuéntale al mundo qué haces y por qué eres la mejor opción.",
-        ctaText: "Contáctanos",
-        // Vacío = el botón abre WhatsApp con el número del negocio (ver resolveCtaLink)
+        // Vacío = sin botón. Si se llena, el enlace vacío abre WhatsApp (ver resolveCtaLink).
+        ctaText: "",
         ctaLink: "",
       };
     case "about":

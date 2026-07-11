@@ -73,7 +73,11 @@ function bgStyle(section: Section, tpl: TemplateConfig, index: number): string {
     css = `background:${bg.value};`;
   } else if (section.type === "hero") {
     const hb = tpl.heroBackground;
-    css = hb.type === "image" ? `background:url('${hb.value}') center/cover;` : `background:${hb.value};`;
+    if (hb.type === "image" && hb.value) {
+      css = `background:${hb.overlay ? `linear-gradient(${hb.overlay}, ${hb.overlay}),` : ""}url('${assetPath(hb.value)}') center/cover;`;
+    } else {
+      css = `background:${hb.value};`;
+    }
   } else {
     css = `background:${index % 2 === 0 ? "var(--bg)" : "var(--surface)"};`;
   }
@@ -100,7 +104,7 @@ function renderSection(section: Section, tpl: TemplateConfig, index: number, con
   <div class="container hero__inner reveal">
     <h1 class="hero__title">${esc(c.title)}</h1>
     <p class="hero__subtitle">${esc(c.subtitle)}</p>
-    ${c.ctaText ? `<a class="button hero__cta" href="${esc(ctaHref)}"${ctaTarget}>${esc(c.ctaText)}</a>` : ""}
+    ${String(c.ctaText ?? "").trim() ? `<a class="button hero__cta" href="${esc(ctaHref)}"${ctaTarget}>${esc(String(c.ctaText).trim())}</a>` : ""}
   </div>
 </section>`;
     }

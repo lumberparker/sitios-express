@@ -25,7 +25,13 @@ function sectionBg(section: Section, tpl: TemplateConfig, index: number): React.
     style.background = bg.value;
   } else if (section.type === "hero") {
     const hb = tpl.heroBackground;
-    style.background = hb.type === "image" ? `url(${hb.value}) center/cover` : hb.value;
+    if (hb.type === "image" && hb.value) {
+      style.backgroundImage = `${hb.overlay ? `linear-gradient(${hb.overlay}, ${hb.overlay}), ` : ""}url(${hb.value})`;
+      style.backgroundSize = "cover";
+      style.backgroundPosition = "center";
+    } else {
+      style.background = hb.value;
+    }
   } else {
     style.background = index % 2 === 0 ? tpl.palette.background : tpl.palette.surface;
   }
@@ -202,7 +208,7 @@ function SectionBody({
           <Reveal delay={0.15}>
             <p className="mx-auto mt-6 max-w-2xl text-lg opacity-80 md:text-xl">{c.subtitle}</p>
           </Reveal>
-          {c.ctaText && (
+          {String(c.ctaText ?? "").trim() && (
             <Reveal delay={0.3}>
               <a
                 href={resolveCtaLink(c.ctaLink, config)}
@@ -211,7 +217,7 @@ function SectionBody({
                 className="mt-10 inline-block rounded-full px-10 py-4 text-lg font-semibold text-white shadow-lg transition-transform hover:scale-105"
                 style={{ background: accent }}
               >
-                {c.ctaText}
+                {String(c.ctaText).trim()}
               </a>
             </Reveal>
           )}
