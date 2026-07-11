@@ -26,7 +26,7 @@ export default function Home() {
 
       <section className="mx-auto max-w-4xl px-6 pt-24 pb-32 text-center">
         <p className="mb-6 inline-block rounded-full border border-brand-teal/50 bg-brand-blue/10 px-4 py-1 text-sm text-brand-teal">
-          Sin registro, sin contraseñas — tu sitio en minutos
+          Sin registro, sin contraseñas — tu sitio en tan pronto como 10 minutos
         </p>
         <h1 className="font-display text-5xl font-bold leading-tight tracking-tight md:text-7xl">
           Arma tu sitio web.
@@ -36,9 +36,10 @@ export default function Home() {
           </span>
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-lg text-slate-400">
-          Llena un formulario (o chatea con nuestro bot de WhatsApp), elige un template con personalidad y personaliza
-          todo. Tu sitio queda guardado en un enlace privado: vuelve cuando quieras a editarlo, y al pagar descargas tu
-          código listo para publicar.
+          Llena un formulario, elige un template con personalidad y personaliza todo. Tu sitio queda guardado en un
+          enlace privado: vuelve cuando quieras a editarlo, y al pagar descargas tu código listo para publicar — o te
+          ayudamos a montarlo y hasta a buscar tu dominio. Puedes tener tu sitio desde cero en tan pronto como 10
+          minutos.
         </p>
         <div className="mt-10 flex items-center justify-center gap-4">
           <Link
@@ -50,10 +51,10 @@ export default function Home() {
         </div>
         <div className="mt-24 grid gap-6 text-left md:grid-cols-2 lg:grid-cols-4">
           {[
-            { t: "1. Cuéntanos de tu negocio", d: "Formulario paso a paso aquí, o conversando con nuestro bot de WhatsApp." },
+            { t: "1. Cuéntanos de tu negocio", d: "Formulario paso a paso con lo esencial de tu negocio. En tan pronto como 10 minutos puedes tener tu sitio listo." },
             { t: "2. Personaliza todo", d: "Templates con carácter, secciones, colores, fondos y widgets con precio claro." },
             { t: "3. Paga y descarga", d: "Tu sitio vive en una URL privada. Edita cuando quieras y, al confirmar tu pago, descarga el .zip listo para publicar." },
-            { t: "4. Ponlo en línea", d: "Te ayudamos a publicarlo — con tu propio dominio o con una dirección genérica — o hazlo por tu cuenta: el código funciona en cualquier hosting." },
+            { t: "4. Ponlo en línea", d: "Te ayudamos a montarlo y hasta a buscar tu dominio — o hazlo por tu cuenta: el código funciona en cualquier hosting." },
           ].map((f) => (
             <div key={f.t} className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur">
               <h3 className="font-display font-semibold text-white">{f.t}</h3>
